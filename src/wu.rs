@@ -27,6 +27,7 @@ pub enum Source {
     Catalog,
     Winget,
     Chocolatey,
+    GitHub,
 }
 
 impl Source {
@@ -36,6 +37,7 @@ impl Source {
             Source::Catalog => "Microsoft Catalog",
             Source::Winget => "Windows Package Manager",
             Source::Chocolatey => "Chocolatey",
+            Source::GitHub => "GitHub",
         }
     }
 }
@@ -82,6 +84,9 @@ pub struct Update {
     pub title: String,
     /// The version in use now, when the source says.
     pub current: String,
+    /// Where a new version of this app downloads from, with its SHA-256.
+    pub link: String,
+    pub checksum: String,
     pub model: String,
     pub provider: String,
     pub class: String,
@@ -228,6 +233,19 @@ fn worker(
                     let wake = wake.clone();
                     std::thread::spawn(move || {
                         let found = crate::software::find(plan.winget, plan.chocolatey);
+                        // Every scan also asks whether DriverKeep itself has a later release.
+                        let own = crate::selfupdate::check();
+                        let found = match (found, own) {
+                            (Ok(mut apps), Some(own)) => {
+                                apps.push(own);
+                                Ok(apps)
+                            }
+                            (Err(error), Some(own)) => {
+                                let _ = events.send(Event::Note(error));
+                                Ok(vec![own])
+                            }
+                            (found, None) => found,
+                        };
                         let _ = events.send(Event::SoftwareDone(found));
                         wake();
                     })
@@ -430,7 +448,10 @@ fn install(
     events: &Sender<Event>,
     wake: &impl Fn(),
 ) -> (bool, usize, usize) {
-    plan.items.sort_by_key(|item| item.update.id == crate::software::PACKAGE_MANAGER_ID);
+    // The package manager goes near the end, and DriverKeep last because updating it closes this copy.
+    plan.items.sort_by_key(|item| {
+        (item.update.source == Source::GitHub, item.update.id == crate::software::PACKAGE_MANAGER_ID)
+    });
     let status = |percent: u32, text: String| {
         let _ = events.send(Event::Status { percent, text });
         wake();
@@ -506,6 +527,12 @@ fn install(
             Source::Winget | Source::Chocolatey => {
                 note(ItemState::Installing);
                 crate::software::upgrade(update)
+            }
+            Source::GitHub => {
+                note(ItemState::Downloading);
+                // Saved first: setup closes this copy before the loop can finish.
+                history::add(std::mem::take(&mut records));
+                crate::selfupdate::install(update, plan.automatic)
             }
         };
         match result {

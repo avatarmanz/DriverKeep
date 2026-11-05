@@ -16,7 +16,7 @@ use crate::devices::{self, Device};
 use crate::history::{self, Record};
 use crate::sysinfo::{self, SystemInfo};
 use crate::system::{self, CloseChoice, Settings, Theme};
-use crate::wu::{self, Command, Event, InstallItem, InstallPlan, ItemState, Kind, SCAN_CACHE, ScanPlan, Update};
+use crate::wu::{self, Command, Event, InstallItem, InstallPlan, ItemState, Kind, SCAN_CACHE, ScanPlan, Source, Update};
 use egui::{Align, Align2, Color32, FontId, Frame, Layout, Margin, RichText, Sense, Vec2};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -319,6 +319,12 @@ impl App {
             let updates: Vec<Update> = self.rows.iter().map(|r| r.update.clone()).collect();
             system::write_cache(SCAN_CACHE, &updates);
             self.take_resume(ctx);
+            let own = self.rows.iter().find(|r| r.update.source == Source::GitHub).map(|r| r.update.id.clone());
+            if let Some(id) = own.filter(|_| self.settings.auto_update_app && system::is_installed()) {
+                if self.busy == Busy::Idle {
+                    self.run_update(vec![id], false);
+                }
+            }
         } else if !self.catalog_pending && !self.software_pending && !self.rows.is_empty() {
             // Results are worth showing while Windows Update finishes.
             self.searched = true;
@@ -599,8 +605,14 @@ impl App {
             .collect();
         let today = system::restore_point_day();
         // Like the original: one restore point a day is enough.
-        let restore_point =
-            self.settings.make_restore_point && self.settings.last_restore_point_day != today;
+        let only_this_app = self
+            .rows
+            .iter()
+            .filter(|r| ids.contains(&r.update.id))
+            .all(|r| r.update.source == Source::GitHub);
+        let restore_point = self.settings.make_restore_point
+            && self.settings.last_restore_point_day != today
+            && !only_this_app;
         if restore_point {
             self.settings.last_restore_point_day = today;
             self.settings.save();
@@ -913,7 +925,13 @@ impl App {
             if !(self.settings.update_all_remind && drivers) {
                 let ids = ids.clone();
                 self.ask = None;
-                if self.admin {
+                // DriverKeep's own setup asks Windows for permission by itself.
+                let only_this_app = self
+                    .rows
+                    .iter()
+                    .filter(|r| ids.contains(&r.update.id))
+                    .all(|r| r.update.source == Source::GitHub);
+                if self.admin || only_this_app {
                     self.run_update(ids, false);
                 } else {
                     self.elevate(format!("update:{}", ids.join(",")), ctx);

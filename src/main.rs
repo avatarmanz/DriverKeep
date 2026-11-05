@@ -5,6 +5,7 @@ mod backup;
 mod catalog;
 mod devices;
 mod history;
+mod selfupdate;
 mod software;
 mod sysinfo;
 mod system;
@@ -87,6 +88,8 @@ fn write_report(path: &std::path::Path) -> Result<(), String> {
         }
         Err(e) => lines.push(format!("catalog error: {e}")),
     }
+    lines.push(format!("this copy: {}, newer release: {:?}", selfupdate::CURRENT, selfupdate::check().map(|u| u.version)));
+    lines.push(format!("self-update download: {}", selfupdate::check_download()));
     match software::find(true, true) {
         Ok(found) => {
             lines.push(format!("software: {} updates", found.len()));
@@ -197,7 +200,7 @@ fn main() -> eframe::Result {
     }
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(system::APP_NAME)
+            .with_title(system::window_title())
             .with_inner_size([1000.0, 660.0])
             .with_min_inner_size([800.0, 480.0])
             .with_icon(ui::window_icon()),

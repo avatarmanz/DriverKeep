@@ -173,6 +173,8 @@ fn wait_for_scan(events: &std::sync::mpsc::Receiver<Event>, settings: &Settings)
 pub fn attach(updates: Vec<Update>, devices: &[Device], settings: &Settings) -> Vec<Update> {
     let updates = updates
         .into_iter()
+        // A saved list may offer a version that's already been installed.
+        .filter(|u| u.source != Source::GitHub || crate::catalog::is_newer(&u.version, crate::selfupdate::CURRENT))
         .map(|mut update| {
             if update.devices.is_empty() && !update.hardware_id.is_empty() {
                 // The original's rule: only a later driver date counts as an update.
@@ -242,7 +244,7 @@ fn scan_and_maybe_install(
                 settings.silent_drivers && (u.source == Source::WindowsUpdate || settings.silent_catalog)
             }
             Kind::Windows => settings.silent_windows,
-            Kind::Software => settings.silent_software,
+            Kind::Software => settings.silent_software && u.source != Source::GitHub,
         })
         .map(|update| InstallItem {
             devices: devices.iter().filter(|d| update.devices.contains(&d.instance_id)).cloned().collect(),
@@ -283,6 +285,32 @@ fn scan_and_maybe_install(
     }
 }
 
+/// With the setting on, installs a later release of DriverKeep found by the last scan.
+/// Setup closes this helper and starts it again, so nothing after this runs if it works.
+fn update_self(engine: &wu::Engine, events: &std::sync::mpsc::Receiver<Event>, settings: &Settings) {
+    if !settings.auto_update_app || !system::is_admin() || !system::is_installed() {
+        return;
+    }
+    let saved: Vec<Update> = system::read_cache(SCAN_CACHE).unwrap_or_default();
+    let newer = saved
+        .into_iter()
+        .find(|u| u.source == Source::GitHub && crate::catalog::is_newer(&u.version, crate::selfupdate::CURRENT));
+    let Some(update) = newer else { return };
+    let _ = engine.commands.send(Command::Install(InstallPlan {
+        items: vec![InstallItem { update, devices: Vec::new() }],
+        restore_point: false,
+        backup_folder: None,
+        require_backup: true,
+        automatic: true,
+    }));
+    loop {
+        match events.recv() {
+            Ok(Event::InstallFinished { .. }) | Err(_) => return,
+            Ok(_) => {}
+        }
+    }
+}
+
 fn worker(inbox: std::sync::mpsc::Receiver<Ask>, first_run: bool) {
     let (event_tx, events) = channel();
     let engine = wu::start(event_tx, || {});
@@ -312,6 +340,11 @@ fn worker(inbox: std::sync::mpsc::Receiver<Ask>, first_run: bool) {
             settings.last_silent_day = today;
             settings.save();
             restart_due |= scan_and_maybe_install(&engine, &events, &mut settings, false);
+        }
+
+        // A restart waiting comes first: updating closes this helper, which would forget it.
+        if !restart_due {
+            update_self(&engine, &events, &settings);
         }
 
         if restart_due && settings.auto_restart {

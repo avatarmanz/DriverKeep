@@ -128,7 +128,7 @@ pub fn hour_text(hour: u32) -> String {
 
 /// Opens the window that's already running, if any. True means "carry on starting".
 pub fn bring_to_front() -> bool {
-    let title = HSTRING::from(system::APP_NAME);
+    let title = HSTRING::from(system::window_title());
     let Ok(found) = (unsafe { FindWindowW(PCWSTR::null(), &title) }) else {
         return true;
     };

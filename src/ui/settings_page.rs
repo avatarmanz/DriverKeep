@@ -237,6 +237,10 @@ impl App {
             group_title(ui, "About");
             let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
             setting(ui, ICON_ABOUT, system::APP_NAME, &version, |_| {});
+            let s = &mut self.settings;
+            setting(ui, ICON_DRIVERS, "Update DriverKeep automatically", "Each scan checks GitHub and installs any later version by itself.", |ui| {
+                changed |= toggle(ui, &mut s.auto_update_app);
+            });
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(RichText::new("Credits").size(14.0));

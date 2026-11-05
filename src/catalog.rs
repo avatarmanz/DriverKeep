@@ -42,7 +42,7 @@ pub struct Details {
     pub date: String,
 }
 
-fn client() -> ureq::Agent {
+pub fn client() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(300)))
         .timeout_connect(Some(Duration::from_secs(15)))
@@ -541,7 +541,7 @@ fn download_once(agent: &ureq::Agent, url: &str, target: &Path) -> Result<Vec<u8
 }
 
 /// Same retry rule as the original. A damaged file is downloaded again too.
-fn download_checked(agent: &ureq::Agent, url: &str, target: &Path, expected: &[u8]) -> Result<(), String> {
+pub fn download_checked(agent: &ureq::Agent, url: &str, target: &Path, expected: &[u8]) -> Result<(), String> {
     let mut problem = String::new();
     for retry in 0..=MAX_RETRIES {
         if retry > 0 {

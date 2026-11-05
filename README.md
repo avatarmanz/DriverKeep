@@ -11,6 +11,7 @@ A fast, simple Windows app that keeps your computer up to date in one place.
 - **Runs in the background if you want:** start with Windows, scheduled scans, silent installs during the hours
   you choose, and automatic restarts.
 - **Light and dark mode.**
+- **Keeps itself current:** each scan checks this page for a later release, and Settings can install it automatically.
 
 ## Where updates come from
 

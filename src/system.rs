@@ -26,6 +26,16 @@ const RESTORE_KEY: PCWSTR = w!("Software\\Microsoft\\Windows NT\\CurrentVersion\
 const RESTORE_LIMIT_VALUE: PCWSTR = w!("SystemRestorePointCreationFrequency");
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 
+pub fn window_title() -> String {
+    format!("{APP_NAME} {}", env!("CARGO_PKG_VERSION"))
+}
+
+/// True when this copy runs from the place the setup program installs to.
+pub fn is_installed() -> bool {
+    let base = std::env::var("ProgramFiles").unwrap_or_default();
+    exe_path().is_some_and(|exe| exe.starts_with(Path::new(&base).join(APP_NAME)))
+}
+
 pub fn is_admin() -> bool {
     unsafe { IsUserAnAdmin().as_bool() }
 }
@@ -435,6 +445,7 @@ pub struct Settings {
     pub update_all_remind: bool,
     pub tools_offered: bool,
     pub install_without_backup: bool,
+    pub auto_update_app: bool,
     pub scan_drivers: bool,
     pub scan_windows: bool,
     pub scan_software: bool,
@@ -483,6 +494,7 @@ impl Default for Settings {
             update_all_remind: true,
             tools_offered: false,
             install_without_backup: false,
+            auto_update_app: false,
             scan_drivers: true,
             scan_windows: true,
             scan_software: true,

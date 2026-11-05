@@ -137,11 +137,23 @@ fn install(silent: bool) -> Result<(), String> {
     if !silent {
         let answer = message("DriverKeep is installed. Open it now?", MB_YESNO | MB_ICONINFORMATION);
         if answer == IDYES {
-            // Through Explorer so the app opens as a normal user, not as administrator.
-            let _ = Command::new("explorer.exe").arg(&exe).spawn();
+            open_app(&exe);
         }
     }
+    // After a self-update, bring back whichever part was running.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--reopen") {
+        open_app(&exe);
+    }
+    if args.iter().any(|a| a == "--helper") {
+        quiet("schtasks", &["/Run", "/TN", HELPER_TASK]);
+    }
     Ok(())
+}
+
+/// Through Explorer so the app opens as a normal user, not as administrator.
+fn open_app(exe: &Path) {
+    let _ = Command::new("explorer.exe").arg(exe).spawn();
 }
 
 fn uninstall(silent: bool) {
