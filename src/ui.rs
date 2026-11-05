@@ -68,6 +68,7 @@ struct Row {
 
 enum Ask {
     Update(Vec<String>),
+    UpdateNoBackup(String),
     Restore(PathBuf, Vec<BackupEntry>),
     Delete(PathBuf),
     Rollback(String, String),
@@ -211,6 +212,9 @@ impl App {
         }
         if app.options.page.as_deref() == Some("tools") {
             app.ask = Some(Ask::OfferTools(true));
+        }
+        if app.options.page.as_deref() == Some("no-backup") {
+            app.ask = Some(Ask::UpdateNoBackup(String::new()));
         }
         // Keeps Windows' startup entry pointing at this copy, for example after an upgrade.
         if app.settings.wants_agent() && app.options.screenshot.is_none() {
@@ -544,7 +548,10 @@ impl App {
         let Some(job) = self.options.resume.take() else { return };
         if let Some(ids) = job.strip_prefix("update:") {
             self.page = Page::Drivers;
-            self.run_update(ids.split(',').map(str::to_string).collect());
+            self.run_update(ids.split(',').map(str::to_string).collect(), false);
+        } else if let Some(id) = job.strip_prefix("update-no-backup:") {
+            self.page = Page::Drivers;
+            self.run_update(vec![id.to_string()], true);
         } else if let Some(rest) = job.strip_prefix("restore:") {
             self.page = Page::Backups;
             if let Some((path, ids)) = rest.split_once('|') {
@@ -571,7 +578,7 @@ impl App {
         }
     }
 
-    fn run_update(&mut self, ids: Vec<String>) {
+    fn run_update(&mut self, ids: Vec<String>, skip_backup: bool) {
         self.notes.clear();
         self.busy = Busy::Installing;
         self.percent = 1;
@@ -601,7 +608,9 @@ impl App {
         let _ = self.engine.commands.send(Command::Install(InstallPlan {
             items,
             restore_point,
-            backup_folder: self.settings.backup_before_update.then(|| self.settings.backup_folder.clone()),
+            backup_folder: (self.settings.backup_before_update && !skip_backup)
+                .then(|| self.settings.backup_folder.clone()),
+            require_backup: !self.settings.install_without_backup,
             automatic: false,
         }));
     }
@@ -905,7 +914,7 @@ impl App {
                 let ids = ids.clone();
                 self.ask = None;
                 if self.admin {
-                    self.run_update(ids);
+                    self.run_update(ids, false);
                 } else {
                     self.elevate(format!("update:{}", ids.join(",")), ctx);
                 }
@@ -925,6 +934,13 @@ impl App {
                     "Your current drivers are saved first, so you can put them back if something goes wrong.{permission}\n\nThe screen may flicker, programs being updated may close, and a restart may be needed."
                 ),
                 "Install".into(),
+            ),
+            Ask::UpdateNoBackup(_) => (
+                "Install without a backup?".into(),
+                format!(
+                    "DriverKeep won't be able to put your current driver back if something goes wrong. A Windows restore point is still made if today doesn't have one.{permission}"
+                ),
+                "Install Anyway".into(),
             ),
             Ask::Restore(_, entries) => (
                 format!("Put {} driver{} back?", entries.len(), plural(entries.len())),
@@ -999,8 +1015,10 @@ impl App {
             }
             let Some(ask) = self.ask.take() else { return };
             match ask {
-                Ask::Update(ids) if self.admin => self.run_update(ids),
+                Ask::Update(ids) if self.admin => self.run_update(ids, false),
                 Ask::Update(ids) => self.elevate(format!("update:{}", ids.join(",")), ctx),
+                Ask::UpdateNoBackup(id) if self.admin => self.run_update(vec![id], true),
+                Ask::UpdateNoBackup(id) => self.elevate(format!("update-no-backup:{id}"), ctx),
                 Ask::Restore(path, entries) if self.admin => self.run_restore(path, entries, ctx),
                 Ask::Restore(path, entries) => {
                     let ids: Vec<&str> = entries.iter().map(|e| e.instance_id.as_str()).collect();

@@ -24,6 +24,7 @@ pub struct Options {
     pub report: Option<PathBuf>,
     pub check_update: Option<PathBuf>,
     pub check_backup: Option<PathBuf>,
+    pub only: Option<String>,
     pub background: bool,
     pub open: bool,
     pub helper_task: Option<String>,
@@ -44,6 +45,7 @@ fn read_options() -> Options {
             "--report" => options.report = args.next().map(PathBuf::from),
             "--check-update" => options.check_update = args.next().map(PathBuf::from),
             "--check-backup" => options.check_backup = args.next().map(PathBuf::from),
+            "--only" => options.only = args.next(),
             "--background" => options.background = true,
             "--open" => options.open = true,
             "--helper-task" => options.helper_task = args.next(),
@@ -124,12 +126,16 @@ fn check_update(path: &std::path::Path) -> Result<(), String> {
 }
 
 /// Backs up a small add-on driver for real, then reads the backup back.
-fn check_backup(folder: &std::path::Path) -> Result<(), String> {
+fn check_backup(folder: &std::path::Path, only: Option<&str>) -> Result<(), String> {
     let list = devices::enumerate(|_, _| {})?;
     let chosen: Vec<devices::Device> = list
         .iter()
         .filter(|d| d.driver.as_ref().is_some_and(|x| x.is_third_party()) && !d.system_item)
         .filter(|d| {
+            // Name a device to test that one; otherwise a few small drivers.
+            if let Some(name) = only {
+                return d.name.to_lowercase().contains(&name.to_lowercase());
+            }
             let size = d.driver.as_ref().and_then(|x| devices::package_folder(&x.inf_name));
             size.and_then(|p| p.parent().map(|f| backup::folder_size(f))).is_some_and(|s| s < 8 << 20)
         })
@@ -165,7 +171,7 @@ fn main() -> eframe::Result {
     }
     if let Some(path) = &options.check_backup {
         let _ = std::fs::create_dir_all(path);
-        if let Err(e) = check_backup(path) {
+        if let Err(e) = check_backup(path, options.only.as_deref()) {
             let _ = std::fs::write(path.join("report.txt"), e);
         }
         return Ok(());

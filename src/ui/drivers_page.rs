@@ -17,6 +17,7 @@ const GROUPS: [(Kind, &str, &str); 3] = [
 #[derive(Default)]
 struct Clicks {
     install: Option<Vec<String>>,
+    no_backup: Option<String>,
     ignore: Option<String>,
     fold: Option<Kind>,
     all: Option<(Kind, bool)>,
@@ -85,6 +86,16 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.menu_button("···", |ui| {
+                    let retry = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
+                    if retry && ui.add_enabled(!installing, egui::Button::new("Try again")).clicked() {
+                        clicks.install = Some(vec![row.update.id.clone()]);
+                        ui.close();
+                    }
+                    let driver = row.update.kind == Kind::Driver && can_install(row);
+                    if driver && ui.add_enabled(!installing, egui::Button::new("Install without a backup")).clicked() {
+                        clicks.no_backup = Some(row.update.id.clone());
+                        ui.close();
+                    }
                     if ui.button("Ignore this update").clicked() {
                         clicks.ignore = Some(row.update.id.clone());
                         ui.close();
@@ -305,6 +316,9 @@ impl App {
 
         if let Some(ids) = clicks.install {
             self.ask = Some(Ask::Update(ids));
+        }
+        if let Some(id) = clicks.no_backup {
+            self.ask = Some(Ask::UpdateNoBackup(id));
         }
         if let Some(kind) = clicks.fold {
             if !self.collapsed.remove(&kind) {

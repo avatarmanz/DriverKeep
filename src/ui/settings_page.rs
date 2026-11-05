@@ -192,6 +192,10 @@ impl App {
             setting(ui, ICON_BACKUP, "Back up before updating", "Saves the current driver so you can put it back.", |ui| {
                 changed |= toggle(ui, &mut s.backup_before_update);
             });
+            let detail = "If a backup fails, the driver installs anyway and can't be put back.";
+            setting(ui, ICON_BACKUP, "Install even if a backup can't be made", detail, |ui| {
+                changed |= toggle(ui, &mut s.install_without_backup);
+            });
             setting(ui, ICON_SHIELD, "Create a Windows restore point", "Made once a day before driver updates.", |ui| {
                 changed |= toggle(ui, &mut s.make_restore_point);
             });

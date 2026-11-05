@@ -7,6 +7,9 @@ use crate::wu::{Kind, Source, Update};
 /// What the package manager says when an update needs a restart to finish.
 const REBOOT_TO_FINISH: u32 = 0x8A15_0109;
 pub const ID_PREFIX: &str = "winget:";
+/// App Installer is the Windows Package Manager itself. Updating it takes the tool away for a
+/// moment, so it goes last in any batch.
+pub const PACKAGE_MANAGER_ID: &str = "winget:Microsoft.AppInstaller";
 pub const CHOCO_PREFIX: &str = "choco:";
 pub const CHOCOLATEY_PACKAGE: &str = "Chocolatey.Chocolatey";
 /// The Microsoft Store page for App Installer, which provides the Windows Package Manager.
@@ -201,6 +204,14 @@ fn windows_package_manager() -> Result<Vec<Update>, String> {
         .collect())
 }
 
+/// Chocolatey puts the old version back when a program's own installer gives up. That usually
+/// means the program, or something using its files, was open.
+fn chocolatey_failure(code: i32) -> String {
+    format!(
+        "The program's installer stopped (code {code}), so Chocolatey kept your current version. Close the program and anything using it, then use ··· to try again."
+    )
+}
+
 /// Updates one program. Gives back true when a restart is needed to finish.
 pub fn upgrade(update: &Update) -> Result<bool, String> {
     if let Some(id) = update.id.strip_prefix(CHOCO_PREFIX) {
@@ -208,25 +219,34 @@ pub fn upgrade(update: &Update) -> Result<bool, String> {
         return match code {
             0 => Ok(false),
             1641 | 3010 => Ok(true),
-            other => Err(format!("The update didn't finish (error {other}).")),
+            other => Err(chocolatey_failure(other)),
         };
     }
     let id = update.id.strip_prefix(ID_PREFIX).unwrap_or(&update.id);
-    let (code, _) = system::run_quiet(
+    let args = [
+        "upgrade",
+        "--id",
+        id,
+        "--exact",
+        "--source",
         "winget",
-        &[
-            "upgrade",
-            "--id",
-            id,
-            "--exact",
-            "--source",
-            "winget",
-            "--silent",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-            "--disable-interactivity",
-        ],
-    )?;
+        "--silent",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+        "--disable-interactivity",
+    ];
+    // The tool can be briefly unavailable, for example just after it updates itself.
+    let mut started = None;
+    for retry in 0..=crate::catalog::MAX_RETRIES {
+        if retry > 0 {
+            std::thread::sleep(crate::catalog::retry_wait(retry));
+        }
+        if let Ok(result) = system::run_quiet("winget", &args) {
+            started = Some(result);
+            break;
+        }
+    }
+    let (code, _) = started.ok_or("The Windows Package Manager was busy. Scan again to retry this one.")?;
     match code as u32 {
         0 => Ok(false),
         REBOOT_TO_FINISH => Ok(true),

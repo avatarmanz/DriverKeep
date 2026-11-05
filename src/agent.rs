@@ -262,6 +262,7 @@ fn scan_and_maybe_install(
         items,
         restore_point,
         backup_folder: settings.backup_before_update.then(|| settings.backup_folder.clone()),
+        require_backup: !settings.install_without_backup,
         automatic: true,
     }));
     loop {

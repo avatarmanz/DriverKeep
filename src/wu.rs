@@ -115,6 +115,8 @@ pub struct InstallPlan {
     pub items: Vec<InstallItem>,
     pub restore_point: bool,
     pub backup_folder: Option<PathBuf>,
+    /// When true, a driver whose backup fails is skipped rather than installed.
+    pub require_backup: bool,
     pub automatic: bool,
 }
 
@@ -424,10 +426,11 @@ fn windows_update_install(
 
 fn install(
     found: Option<&(IUpdateSession, IUpdateCollection)>,
-    plan: InstallPlan,
+    mut plan: InstallPlan,
     events: &Sender<Event>,
     wake: &impl Fn(),
 ) -> (bool, usize, usize) {
+    plan.items.sort_by_key(|item| item.update.id == crate::software::PACKAGE_MANAGER_ID);
     let status = |percent: u32, text: String| {
         let _ = events.send(Event::Status { percent, text });
         wake();
@@ -475,15 +478,16 @@ fn install(
                     .devices
                     .iter()
                     .any(|d| d.driver.as_ref().is_some_and(|x| x.is_third_party()));
-                let missed = match &saved {
-                    Ok(done) => !done.skipped.is_empty(),
-                    Err(_) => true,
+                let problem = match &saved {
+                    Ok(done) if done.skipped.is_empty() => None,
+                    Ok(done) => Some(format!("no driver file for {}", done.skipped.join(", "))),
+                    Err(error) => Some(error.clone()),
                 };
-                if missed && must_have {
+                if let Some(problem) = problem.filter(|_| must_have && plan.require_backup) {
                     failed += 1;
-                    note(ItemState::Skipped(
-                        "The current driver couldn't be backed up, so this update was skipped.".into(),
-                    ));
+                    note(ItemState::Skipped(format!(
+                        "The current driver couldn't be backed up ({problem}), so this was skipped. Use ··· to install it anyway."
+                    )));
                     continue;
                 }
                 saved_to = saved.ok().map(|d| d.path.to_string_lossy().to_string());

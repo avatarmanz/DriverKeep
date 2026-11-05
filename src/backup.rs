@@ -123,7 +123,20 @@ pub fn create(
             }
             packages.push(Package { root: root.clone(), name: name.clone(), files });
         }
-        let inf_file = inf.file_name().unwrap_or_default().to_string_lossy();
+        // Windows can report a name in a different case from the file itself, and names
+        // inside a backup are case-sensitive, so use the name as it really is on disk.
+        let reported = inf.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let inf_file = packages
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| {
+                p.files.iter().find_map(|file| {
+                    let found = file.file_name()?.to_string_lossy().to_string();
+                    let beside_root = file.parent() == Some(p.root.as_path());
+                    (beside_root && found.eq_ignore_ascii_case(&reported)).then_some(found)
+                })
+            })
+            .unwrap_or(reported);
         entries.push(BackupEntry {
             instance_id: device.instance_id.clone(),
             device_name: device.name.clone(),
