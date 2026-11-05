@@ -1,0 +1,38 @@
+# DriverKeep
+
+A fast, simple Windows app that keeps your computer up to date in one place.
+
+- **One scan, three kinds of update:** drivers, Windows updates and your installed software. Update everything
+  with one button, or one group at a time.
+- **All your hardware:** everything connected now, and everything that used to be plugged in, with full system
+  details on one page.
+- **Safe driver updates:** your current driver is backed up first, a Windows restore point is made once a day,
+  and you can put any driver back.
+- **Runs in the background if you want:** start with Windows, scheduled scans, silent installs during the hours
+  you choose, and automatic restarts.
+- **Light and dark mode.**
+
+## Where updates come from
+
+Only public, official sources are used:
+
+- Windows Update, for drivers and Windows updates
+- The Microsoft Update Catalog, matched to your exact hardware and checked against Microsoft's published checksum
+- The Windows Package Manager and Chocolatey, for other installed software
+
+## Install
+
+Download `DriverKeep-Setup.exe` from the Releases page and run it. It needs Windows 10 or 11. Because the
+installer isn't code-signed yet, Windows SmartScreen may warn you: choose **More info**, then **Run anyway**.
+
+To remove it, use **Installed apps** in Windows Settings. Your driver backups are kept.
+
+## Credits
+
+- Created by avatarmanz
+- Built with Claude by Anthropic
+- Made with Craft Anything
+
+## Build it yourself
+
+You need the Rust toolchain. Run `make-installer.cmd` to create `dist\DriverKeep-Setup.exe`.

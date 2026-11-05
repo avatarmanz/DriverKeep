@@ -1,0 +1,8 @@
+target/
+installer/target/
+dist/
+shots/
+publish-to-github.cmd
+# Research notes kept out of the published project.
+MECHANICS.md
+mechanics.json
