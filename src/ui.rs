@@ -104,6 +104,7 @@ pub struct App {
     collapsed: HashSet<Kind>,
     tools: Option<(bool, bool)>,
     tools_installing: bool,
+    settings_tab: settings_page::SettingsTab,
 
     filter: String,
     show: Show,
@@ -147,7 +148,7 @@ impl App {
         let page = match options.page.as_deref() {
             Some("system") | Some("hardware") => Page::System,
             Some("backups") | Some("backup") | Some("restore") => Page::Backups,
-            Some("settings") | Some("about") => Page::Settings,
+            Some(page) if page.starts_with("settings") || page == "about" => Page::Settings,
             _ => Page::Drivers,
         };
         let backups = backup::list(&settings.backup_folder);
@@ -175,6 +176,7 @@ impl App {
             collapsed: HashSet::new(),
             tools: None,
             tools_installing: false,
+            settings_tab: settings_page::SettingsTab::from_page(options.page.as_deref()),
             filter: String::new(),
             show: Show::All,
             show_system_items: false,
