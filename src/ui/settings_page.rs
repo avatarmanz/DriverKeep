@@ -56,25 +56,32 @@ impl App {
             let (winget_ready, choco_ready) = self.tools.unwrap_or((true, true));
             let mut get_winget = false;
             let mut get_chocolatey = false;
+            let mut open_store = false;
+            let free = !self.tools_installing;
+            let install_text = if free { "Install" } else { "Installing…" };
             setting(ui, ICON_SETTINGS, "Windows Package Manager", "Finds updates for the programs already on your PC.", |ui| {
                 if winget_ready {
                     changed |= toggle(ui, &mut s.use_winget);
                 } else {
-                    get_winget = secondary(ui, "Get It", true);
+                    get_winget = secondary(ui, install_text, free);
+                    open_store = secondary(ui, "Microsoft Store", true);
                 }
             });
             setting(ui, ICON_SETTINGS, "Chocolatey", "Updates programs that Chocolatey installed.", |ui| {
                 if choco_ready {
                     changed |= toggle(ui, &mut s.use_chocolatey);
                 } else {
-                    get_chocolatey = secondary(ui, "Install", winget_ready);
+                    get_chocolatey = secondary(ui, install_text, free);
                 }
             });
-            if get_winget {
-                system::open_link(crate::software::WINGET_STORE_LINK);
+            if open_store {
+                use crate::software::{WINGET_STORE_LINK, WINGET_WEB_LINK};
+                std::thread::spawn(|| {
+                    system::open_store_page(WINGET_STORE_LINK, WINGET_WEB_LINK);
+                });
             }
-            if get_chocolatey {
-                self.ask = Some(Ask::InstallChocolatey);
+            if get_winget || get_chocolatey {
+                self.ask = Some(Ask::InstallTools(get_winget, get_chocolatey));
             }
             let s = &mut self.settings;
             setting(ui, ICON_SCAN, "Include optional Windows updates", "Previews Windows doesn't install by itself.", |ui| {

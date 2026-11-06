@@ -3,6 +3,7 @@
 
 use crate::system;
 use crate::wu::{Kind, Source, Update};
+use std::path::Path;
 
 /// What the package manager says when an update needs a restart to finish.
 const REBOOT_TO_FINISH: u32 = 0x8A15_0109;
@@ -11,9 +12,22 @@ pub const ID_PREFIX: &str = "winget:";
 /// moment, so it goes last in any batch.
 pub const PACKAGE_MANAGER_ID: &str = "winget:Microsoft.AppInstaller";
 pub const CHOCO_PREFIX: &str = "choco:";
-pub const CHOCOLATEY_PACKAGE: &str = "Chocolatey.Chocolatey";
 /// The Microsoft Store page for App Installer, which provides the Windows Package Manager.
 pub const WINGET_STORE_LINK: &str = "ms-windows-store://pdp/?productid=9NBLGGH4NNS1";
+pub const WINGET_WEB_LINK: &str = "https://apps.microsoft.com/detail/9NBLGGH4NNS1";
+/// Microsoft's own steps for a PC without the Store. TLS 1.2 is added for older Windows settings.
+const INSTALL_WINGET: &str = "$ProgressPreference='SilentlyContinue'; \
+    [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; \
+    Install-PackageProvider -Name NuGet -Force | Out-Null; \
+    Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Scope AllUsers | Out-Null; \
+    Repair-WinGetPackageManager -AllUsers; \
+    Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe";
+/// Chocolatey's published install command.
+const INSTALL_CHOCOLATEY: &str = "$ProgressPreference='SilentlyContinue'; \
+    Set-ExecutionPolicy Bypass -Scope Process -Force; \
+    [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; \
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))";
+const TOOLS_LOG: &str = "tools-install.log";
 
 #[derive(Debug, PartialEq)]
 pub struct Package {
@@ -73,8 +87,20 @@ pub fn parse_table(text: &str) -> Vec<Package> {
     found
 }
 
-fn tool_ready(program: &str) -> bool {
-    system::run_quiet(program, &["--version"]).map(|(code, _)| code == 0).unwrap_or(false)
+/// A tool installed a moment ago isn't on this copy's search path yet, so look where it lands.
+fn tool_path(name: &str) -> String {
+    let folder = match name {
+        "choco" => std::env::var("ProgramData").ok().map(|base| Path::new(&base).join("chocolatey\\bin")),
+        _ => dirs::data_local_dir().map(|base| base.join("Microsoft\\WindowsApps")),
+    };
+    folder
+        .map(|folder| folder.join(format!("{name}.exe")))
+        .filter(|file| std::fs::symlink_metadata(file).is_ok())
+        .map_or_else(|| name.to_string(), |file| file.to_string_lossy().into_owned())
+}
+
+fn tool_ready(name: &str) -> bool {
+    system::run_quiet(&tool_path(name), &["--version"]).map(|(code, _)| code == 0).unwrap_or(false)
 }
 
 /// Which package managers this PC has: (Windows Package Manager, Chocolatey).
@@ -82,23 +108,29 @@ pub fn tools_ready() -> (bool, bool) {
     (tool_ready("winget"), tool_ready("choco"))
 }
 
-/// Run by the elevated copy of this program, from the button in Settings.
-pub fn install_chocolatey() {
-    let _ = system::run_quiet(
-        "winget",
-        &[
-            "install",
-            "--id",
-            CHOCOLATEY_PACKAGE,
-            "--exact",
-            "--source",
-            "winget",
-            "--silent",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-            "--disable-interactivity",
-        ],
-    );
+fn run_script(script: &str) -> String {
+    let wrapped = format!("& {{ {script} }} *>&1 | Out-String");
+    let args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &wrapped];
+    match system::run_quiet("powershell", &args) {
+        Ok((code, text)) => format!("exit {code}\n{text}"),
+        Err(error) => error,
+    }
+}
+
+/// Run by the elevated copy of this program. Each tool installs without the other's help, and
+/// what PowerShell said is saved in case one of them fails.
+pub fn install_tools(which: &str) {
+    let mut log = String::new();
+    if which.contains("winget") && !tool_ready("winget") {
+        log.push_str(&run_script(INSTALL_WINGET));
+    }
+    if which.contains("chocolatey") && !tool_ready("choco") {
+        log.push_str(&run_script(INSTALL_CHOCOLATEY));
+    }
+    if let Some(folder) = system::data_dir() {
+        let _ = std::fs::create_dir_all(&folder);
+        let _ = std::fs::write(folder.join(TOOLS_LOG), log);
+    }
 }
 
 /// Reads `choco outdated -r`: name|installed|available|pinned, one per line.
@@ -127,7 +159,7 @@ pub fn parse_chocolatey(text: &str) -> Vec<Package> {
 }
 
 fn chocolatey() -> Result<Vec<Update>, String> {
-    let (_, text) = system::run_quiet("choco", &["outdated", "-r", "--ignore-unfound"])
+    let (_, text) = system::run_quiet(&tool_path("choco"), &["outdated", "-r", "--ignore-unfound"])
         .map_err(|_| "Chocolatey couldn't be started.".to_string())?;
     Ok(parse_chocolatey(&text)
         .into_iter()
@@ -182,7 +214,7 @@ pub fn find(use_winget: bool, use_chocolatey: bool) -> Result<Vec<Update>, Strin
 
 fn windows_package_manager() -> Result<Vec<Update>, String> {
     let (code, text) = system::run_quiet(
-        "winget",
+        &tool_path("winget"),
         &["upgrade", "--source", "winget", "--accept-source-agreements", "--disable-interactivity"],
     )
     .map_err(|_| "The Windows Package Manager isn't available on this PC.".to_string())?;
@@ -215,7 +247,7 @@ fn chocolatey_failure(code: i32) -> String {
 /// Updates one program. Gives back true when a restart is needed to finish.
 pub fn upgrade(update: &Update) -> Result<bool, String> {
     if let Some(id) = update.id.strip_prefix(CHOCO_PREFIX) {
-        let (code, _) = system::run_quiet("choco", &["upgrade", id, "-y", "--no-progress"])?;
+        let (code, _) = system::run_quiet(&tool_path("choco"), &["upgrade", id, "-y", "--no-progress"])?;
         return match code {
             0 => Ok(false),
             1641 | 3010 => Ok(true),
@@ -241,7 +273,7 @@ pub fn upgrade(update: &Update) -> Result<bool, String> {
         if retry > 0 {
             std::thread::sleep(crate::catalog::retry_wait(retry));
         }
-        if let Ok(result) = system::run_quiet("winget", &args) {
+        if let Ok(result) = system::run_quiet(&tool_path("winget"), &args) {
             started = Some(result);
             break;
         }

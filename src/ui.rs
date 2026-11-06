@@ -49,6 +49,7 @@ enum Work {
     RollbackDone(Result<bool, String>, String),
     HelperTask(bool, bool),
     Tools(bool, bool),
+    ToolsInstalled(bool, bool, bool),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -75,8 +76,8 @@ enum Ask {
     HelperTask(bool),
     Close,
     CloseWhileWorking,
-    InstallChocolatey,
-    OfferTools(bool),
+    /// Whether to install the Windows Package Manager, and Chocolatey.
+    InstallTools(bool, bool),
 }
 
 pub struct App {
@@ -102,6 +103,7 @@ pub struct App {
     show_uptodate: bool,
     collapsed: HashSet<Kind>,
     tools: Option<(bool, bool)>,
+    tools_installing: bool,
 
     filter: String,
     show: Show,
@@ -172,6 +174,7 @@ impl App {
             show_uptodate: false,
             collapsed: HashSet::new(),
             tools: None,
+            tools_installing: false,
             filter: String::new(),
             show: Show::All,
             show_system_items: false,
@@ -211,7 +214,7 @@ impl App {
             app.ask = Some(Ask::CloseWhileWorking);
         }
         if app.options.page.as_deref() == Some("tools") {
-            app.ask = Some(Ask::OfferTools(true));
+            app.ask = Some(Ask::InstallTools(true, true));
         }
         if app.options.page.as_deref() == Some("no-backup") {
             app.ask = Some(Ask::UpdateNoBackup(String::new()));
@@ -407,8 +410,18 @@ impl App {
                     let missing = !winget || !chocolatey;
                     let quiet = self.options.screenshot.is_some() || self.options.resume.is_some();
                     if missing && !self.settings.tools_offered && !quiet && self.ask.is_none() {
-                        self.ask = Some(Ask::OfferTools(winget));
+                        self.ask = Some(Ask::InstallTools(!winget, !chocolatey));
                     }
+                }
+                Work::ToolsInstalled(ran, winget, chocolatey) => {
+                    self.tools = Some((winget, chocolatey));
+                    self.tools_installing = false;
+                    self.message = Some(match (ran, winget, chocolatey) {
+                        (false, ..) => ("Windows didn't give permission, so nothing was changed.".into(), true),
+                        (_, true, true) => ("Package managers are ready. Scan Again to see updates for your programs.".into(), false),
+                        (_, false, _) => ("The Windows Package Manager couldn't be installed. You can get it from the Microsoft Store in Settings.".into(), true),
+                        (_, true, false) => ("Chocolatey couldn't be installed. You can try again in Settings.".into(), true),
+                    });
                 }
                 Work::Progress(percent, text) => {
                     self.percent = percent;
@@ -986,21 +999,20 @@ impl App {
                 "Turn Off".into(),
             ),
             Ask::Close | Ask::CloseWhileWorking => return,
-            Ask::InstallChocolatey => (
-                "Install Chocolatey?".into(),
-                "Chocolatey is a free tool that updates programs. Windows will ask for permission, then it installs from the Windows Package Manager.".into(),
-                "Install".into(),
-            ),
-            Ask::OfferTools(true) => (
-                "Update more of your software?".into(),
-                "Package managers let DriverKeep find and update your other programs. Chocolatey isn't on this PC yet.\n\nIt's free. Windows will ask for permission, and you can change this later in Settings.".into(),
-                "Install Chocolatey".into(),
-            ),
-            Ask::OfferTools(false) => (
-                "Update more of your software?".into(),
-                "Package managers let DriverKeep find and update your other programs. The Windows Package Manager isn't on this PC yet.\n\nIt's free from the Microsoft Store. Once it's installed, you can add Chocolatey in Settings.".into(),
-                "Open Microsoft Store".into(),
-            ),
+            Ask::InstallTools(winget, chocolatey) => {
+                let (missing, button) = match (*winget, *chocolatey) {
+                    (true, true) => ("The Windows Package Manager and Chocolatey aren't", "Install Both"),
+                    (true, false) => ("The Windows Package Manager isn't", "Install"),
+                    _ => ("Chocolatey isn't", "Install"),
+                };
+                (
+                    "Update more of your software?".into(),
+                    format!(
+                        "Package managers let DriverKeep find and update your other programs. {missing} on this PC yet.\n\nThey're free. Windows will ask for permission once, then they install in the background. You can change this later in Settings."
+                    ),
+                    button.into(),
+                )
+            }
         };
         let mut go = false;
         let mut stop = false;
@@ -1019,7 +1031,7 @@ impl App {
                 stop = secondary(ui, "Cancel", true);
             });
         });
-        if (stop || go) && matches!(self.ask, Some(Ask::OfferTools(_))) {
+        if (stop || go) && matches!(self.ask, Some(Ask::InstallTools(..))) {
             self.settings.tools_offered = true;
             self.settings.save();
         }
@@ -1052,14 +1064,20 @@ impl App {
                 Ask::Rollback(id, name) if self.admin => self.run_rollback(id, name, ctx),
                 Ask::Rollback(id, _) => self.elevate(format!("rollback:{id}"), ctx),
                 Ask::Close | Ask::CloseWhileWorking => {}
-                Ask::OfferTools(false) => system::open_link(crate::software::WINGET_STORE_LINK),
-                Ask::InstallChocolatey | Ask::OfferTools(true) => {
+                Ask::InstallTools(winget, chocolatey) => {
+                    self.tools_installing = true;
+                    self.message = Some(("Installing in the background. This can take a few minutes.".into(), false));
                     let tx = self.tx.clone();
                     let wake = ctx.clone();
                     std::thread::spawn(move || {
-                        system::run_as_admin("--install-chocolatey", true);
+                        let which = match (winget, chocolatey) {
+                            (true, true) => "winget,chocolatey",
+                            (true, false) => "winget",
+                            _ => "chocolatey",
+                        };
+                        let ran = system::run_as_admin(&format!("--install-tools {which}"), true);
                         let (winget, chocolatey) = crate::software::tools_ready();
-                        let _ = tx.send(Work::Tools(winget, chocolatey));
+                        let _ = tx.send(Work::ToolsInstalled(ran, winget, chocolatey));
                         wake.request_repaint();
                     });
                 }

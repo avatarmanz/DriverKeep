@@ -29,7 +29,8 @@ pub struct Options {
     pub background: bool,
     pub open: bool,
     pub helper_task: Option<String>,
-    pub install_chocolatey: bool,
+    pub install_tools: Option<String>,
+    pub open_store: Option<PathBuf>,
     pub write_icon: Option<PathBuf>,
 }
 
@@ -50,7 +51,8 @@ fn read_options() -> Options {
             "--background" => options.background = true,
             "--open" => options.open = true,
             "--helper-task" => options.helper_task = args.next(),
-            "--install-chocolatey" => options.install_chocolatey = true,
+            "--install-tools" => options.install_tools = args.next(),
+            "--open-store" => options.open_store = args.next().map(PathBuf::from),
             "--write-icon" => options.write_icon = args.next().map(PathBuf::from),
             _ => {}
         }
@@ -180,8 +182,13 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
-    if options.install_chocolatey {
-        software::install_chocolatey();
+    if let Some(which) = &options.install_tools {
+        software::install_tools(which);
+        return Ok(());
+    }
+    if let Some(path) = &options.open_store {
+        let opened = system::open_store_page(software::WINGET_STORE_LINK, software::WINGET_WEB_LINK);
+        let _ = std::fs::write(path, opened);
         return Ok(());
     }
     if let Some(state) = &options.helper_task {

@@ -1,0 +1,4 @@
+# Builds Microsoft's C runtime into the programs, so a brand new PC can run them (and setup)
+# without VCRUNTIME140.dll. installer/ picks this up too.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

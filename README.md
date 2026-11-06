@@ -26,6 +26,9 @@ Only public, official sources are used:
 Download `DriverKeep-Setup.exe` from the Releases page and run it. It needs Windows 10 or 11. Because the
 installer isn't code-signed yet, Windows SmartScreen may warn you: choose **More info**, then **Run anyway**.
 
+Setup adds Microsoft's Visual C++ files (x64 and x86) if they're missing, so it works on a brand new PC. On first
+launch DriverKeep offers to install the Windows Package Manager and Chocolatey in the background.
+
 To remove it, use **Installed apps** in Windows Settings. Your driver backups are kept.
 
 ## Credits

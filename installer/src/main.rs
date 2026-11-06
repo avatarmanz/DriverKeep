@@ -6,7 +6,9 @@
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Graphics::Gdi::{DEFAULT_GUI_FONT, GetStockObject};
+use windows::Win32::System::Com::Urlmon::URLDownloadToFileW;
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Registry::*;
 use windows::Win32::UI::Shell::*;
@@ -20,6 +22,73 @@ const UNINSTALL_KEY: &str = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Unins
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const HELPER_TASK: &str = "DriverKeep Background Helper";
 const NO_WINDOW: u32 = 0x0800_0000;
+/// Microsoft's Visual C++ files, which other programs on a new PC may also need.
+const RUNTIMES: [(&str, &str); 2] = [
+    ("x64", "https://aka.ms/vc14/vc_redist.x64.exe"),
+    ("x86", "https://aka.ms/vc14/vc_redist.x86.exe"),
+];
+/// Both places Windows records them, which depends on the version installed.
+const RUNTIME_KEYS: [&str; 2] = [
+    "SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\",
+    "SOFTWARE\\WOW6432Node\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\",
+];
+/// Finished, finished after a restart (twice), or a newer one is already there.
+const RUNTIME_OK: [i32; 4] = [0, 1641, 3010, 1638];
+/// A STATIC window's centred text, across and down.
+const CENTERED: u32 = 0x0001 | 0x0200;
+
+/// A small box saying what setup is doing, for the slow steps.
+struct Status(isize);
+
+impl Status {
+    fn show(text: &str) -> Self {
+        let (tell, heard) = std::sync::mpsc::channel();
+        let text = HSTRING::from(text);
+        std::thread::spawn(move || unsafe {
+            let (width, height) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+            let style = WS_POPUP | WS_BORDER | WS_VISIBLE | WINDOW_STYLE(CENTERED);
+            let Ok(window) = CreateWindowExW(
+                WS_EX_TOPMOST,
+                w!("STATIC"),
+                &text,
+                style,
+                (width - 420) / 2,
+                (height - 90) / 2,
+                420,
+                90,
+                None,
+                None,
+                None,
+                None,
+            ) else {
+                let _ = tell.send(0);
+                return;
+            };
+            let font = GetStockObject(DEFAULT_GUI_FONT).0 as usize;
+            SendMessageW(window, WM_SETFONT, Some(WPARAM(font)), Some(LPARAM(1)));
+            let _ = tell.send(window.0 as isize);
+            let mut note = MSG::default();
+            while GetMessageW(&mut note, None, 0, 0).as_bool() {
+                DispatchMessageW(&note);
+            }
+        });
+        Status(heard.recv().unwrap_or(0))
+    }
+
+    fn say(&self, text: &str) {
+        unsafe {
+            let _ = SetWindowTextW(HWND(self.0 as _), &HSTRING::from(text));
+        }
+    }
+}
+
+impl Drop for Status {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = PostMessageW(Some(HWND(self.0 as _)), WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
+    }
+}
 
 fn message(text: &str, kind: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
     unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from(APP), kind) }
@@ -53,6 +122,100 @@ fn elevate(args: &str) -> bool {
         )
     };
     result.0 as usize > 32
+}
+
+fn runtime_ready(arch: &str) -> bool {
+    RUNTIME_KEYS.iter().any(|base| {
+        let mut value = 0u32;
+        let mut size = 4u32;
+        let read = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                &HSTRING::from(format!("{base}{arch}")),
+                w!("Installed"),
+                RRF_RT_REG_DWORD,
+                None,
+                Some(&mut value as *mut u32 as *mut _),
+                Some(&mut size),
+            )
+        };
+        read.is_ok() && value == 1
+    })
+}
+
+/// Setup runs as administrator, so a download only runs if Microsoft really signed it.
+fn signed_by_microsoft(file: &Path) -> bool {
+    let path = file.display().to_string().replace('\'', "''");
+    let check = format!(
+        "$s=Get-AuthenticodeSignature -LiteralPath '{path}'; if($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -like '*O=Microsoft Corporation*'){{exit 0}}else{{exit 1}}"
+    );
+    Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &check])
+        .creation_flags(NO_WINDOW)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Keeps a timed record of setup's steps in the temp folder, for when something goes wrong.
+fn note(text: &str) {
+    use std::io::Write;
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |time| time.as_secs());
+    let path = std::env::temp_dir().join("DriverKeep-Setup.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{seconds} {text}");
+    }
+}
+
+fn add_runtime(arch: &str, url: &str, folder: &Path, status: Option<&Status>) -> Result<(), String> {
+    let say = |text: String| {
+        note(&text);
+        if let Some(status) = status {
+            status.say(&text);
+        }
+    };
+    let file = folder.join(format!("vc_redist.{arch}.exe"));
+    say(format!("Downloading Microsoft Visual C++ ({arch})..."));
+    unsafe { URLDownloadToFileW(None, &HSTRING::from(url), &HSTRING::from(file.as_os_str()), 0, None) }
+        .map_err(|e| format!("the {arch} download failed ({e})"))?;
+    note("checking signature");
+    if !signed_by_microsoft(&file) {
+        return Err(format!("the {arch} download wasn't signed by Microsoft"));
+    }
+    say(format!("Installing Microsoft Visual C++ ({arch}). This can take a few minutes..."));
+    let code = Command::new(&file)
+        .args(["/install", "/quiet", "/norestart"])
+        .creation_flags(NO_WINDOW)
+        .status()
+        .map_err(|e| format!("the {arch} installer couldn't start ({e})"))?
+        .code()
+        .unwrap_or(-1);
+    note(&format!("{arch} installer finished with code {code}"));
+    if RUNTIME_OK.contains(&code) {
+        Ok(())
+    } else {
+        Err(format!("the {arch} installer stopped with code {code}"))
+    }
+}
+
+/// Adds whichever Visual C++ files are missing. DriverKeep has its own copy built in, so a problem
+/// here doesn't stop the install.
+fn add_missing_runtimes(status: Option<&Status>) -> Vec<String> {
+    let missing: Vec<_> = RUNTIMES.iter().filter(|(arch, _)| !runtime_ready(arch)).collect();
+    if missing.is_empty() {
+        return Vec::new();
+    }
+    let folder = std::env::temp_dir().join("DriverKeep-Setup");
+    if let Err(error) = std::fs::create_dir_all(&folder) {
+        return vec![error.to_string()];
+    }
+    let problems = missing
+        .iter()
+        .filter_map(|(arch, url)| add_runtime(arch, url, &folder, status).err())
+        .collect();
+    let _ = std::fs::remove_dir_all(&folder);
+    problems
 }
 
 fn set_text(key: HKEY, name: &str, value: &str) {
@@ -119,7 +282,7 @@ fn write_payload(folder: &Path) -> Result<PathBuf, String> {
     Ok(exe)
 }
 
-fn install(silent: bool) -> Result<(), String> {
+fn install_files() -> Result<PathBuf, String> {
     // A copy already running would hold the old file open.
     quiet("taskkill", &["/F", "/IM", "driverkeep.exe"]);
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -133,22 +296,24 @@ fn install(silent: bool) -> Result<(), String> {
     }
     make_shortcut(&exe, &shortcut_file()).map_err(|e| format!("Couldn't add the Start menu shortcut: {e}"))?;
     register(&folder, &exe, &uninstaller)?;
+    Ok(exe)
+}
 
+fn finish(exe: &Path, silent: bool) {
     if !silent {
         let answer = message("DriverKeep is installed. Open it now?", MB_YESNO | MB_ICONINFORMATION);
         if answer == IDYES {
-            open_app(&exe);
+            open_app(exe);
         }
     }
     // After a self-update, bring back whichever part was running.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--reopen") {
-        open_app(&exe);
+        open_app(exe);
     }
     if args.iter().any(|a| a == "--helper") {
         quiet("schtasks", &["/Run", "/TN", HELPER_TASK]);
     }
-    Ok(())
 }
 
 /// Through Explorer so the app opens as a normal user, not as administrator.
@@ -210,7 +375,26 @@ fn main() {
             return;
         }
     }
-    if let Err(error) = install(silent) {
-        message(&format!("DriverKeep couldn't be installed.\n\n{error}"), MB_OK | MB_ICONERROR);
+    let status = (!silent).then(|| Status::show("Checking for Microsoft Visual C++..."));
+    let problems = add_missing_runtimes(status.as_ref());
+    if let Some(status) = &status {
+        status.say("Installing DriverKeep...");
+    }
+    note("installing DriverKeep");
+    let installed = install_files();
+    note("files done");
+    drop(status);
+    if !problems.is_empty() && !silent {
+        let text = format!(
+            "Microsoft Visual C++ couldn't be added: {}.\n\nDriverKeep doesn't need it, but some other programs might.",
+            problems.join(", ")
+        );
+        message(&text, MB_OK | MB_ICONWARNING);
+    }
+    match installed {
+        Ok(exe) => finish(&exe, silent),
+        Err(error) => {
+            message(&format!("DriverKeep couldn't be installed.\n\n{error}"), MB_OK | MB_ICONERROR);
+        }
     }
 }

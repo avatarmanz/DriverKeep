@@ -117,6 +117,23 @@ pub fn open_link(link: &str) {
     let _ = Command::new("explorer.exe").arg(link).spawn();
 }
 
+/// Whether the Microsoft Store app is on this PC. Windows Sandbox and some work PCs don't have it.
+pub fn store_installed() -> bool {
+    let check = "if (Get-AppxPackage -Name Microsoft.WindowsStore) { exit 0 } else { exit 1 }";
+    run_quiet("powershell", &["-NoProfile", "-NonInteractive", "-Command", check])
+        .map(|(code, _)| code == 0)
+        .unwrap_or(false)
+}
+
+/// Opens a Microsoft Store page, or the same page on the web on a PC without the Store. Explorer
+/// would open the Documents folder for a Store link nothing can handle, so the Store is checked
+/// first. Gives back the link that was opened.
+pub fn open_store_page(store: &'static str, web: &'static str) -> &'static str {
+    let link = if store_installed() { store } else { web };
+    open_link(link);
+    link
+}
+
 pub fn show_window() {
     if let Some(exe) = exe_path() {
         let _ = Command::new(exe).spawn();
