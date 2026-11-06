@@ -294,7 +294,8 @@ fn update_self(engine: &wu::Engine, events: &std::sync::mpsc::Receiver<Event>, s
     let saved: Vec<Update> = system::read_cache(SCAN_CACHE).unwrap_or_default();
     let newer = saved
         .into_iter()
-        .find(|u| u.source == Source::GitHub && crate::catalog::is_newer(&u.version, crate::selfupdate::CURRENT));
+        .find(|u| u.source == Source::GitHub && crate::catalog::is_newer(&u.version, crate::selfupdate::CURRENT))
+        .filter(|u| !settings.ignored.contains(&u.id));
     let Some(update) = newer else { return };
     let _ = engine.commands.send(Command::Install(InstallPlan {
         items: vec![InstallItem { update, devices: Vec::new() }],

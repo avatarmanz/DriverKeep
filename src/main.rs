@@ -89,7 +89,8 @@ fn write_report(path: &std::path::Path) -> Result<(), String> {
         Err(e) => lines.push(format!("catalog error: {e}")),
     }
     lines.push(format!("this copy: {}, newer release: {:?}", selfupdate::CURRENT, selfupdate::check().map(|u| u.version)));
-    lines.push(format!("self-update download: {}", selfupdate::check_download()));
+    let update_test = path.with_file_name("update-test");
+    lines.push(format!("self-update download: {}", selfupdate::check_download(&update_test)));
     match software::find(true, true) {
         Ok(found) => {
             lines.push(format!("software: {} updates", found.len()));
