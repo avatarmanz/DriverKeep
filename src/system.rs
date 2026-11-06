@@ -377,6 +377,48 @@ pub fn end_restore_point(sequence: i64) {
     }
 }
 
+/// A number under the current user's registry key, such as an Internet Settings switch.
+pub fn user_registry_number(key_path: &str, value: &str) -> Option<u32> {
+    let mut key = HKEY::default();
+    let path = HSTRING::from(key_path);
+    if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, &path, None, KEY_READ, &mut key) } != ERROR_SUCCESS {
+        return None;
+    }
+    let name = HSTRING::from(value);
+    let mut number = 0u32;
+    let mut size = 4u32;
+    let read = unsafe {
+        RegQueryValueExW(key, &name, None, None, Some(&mut number as *mut u32 as *mut u8), Some(&mut size))
+    };
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
+    (read == ERROR_SUCCESS).then_some(number)
+}
+
+/// Text under the current user's registry key. Empty when it isn't there.
+pub fn user_registry_text(key_path: &str, value: &str) -> String {
+    let mut key = HKEY::default();
+    let path = HSTRING::from(key_path);
+    if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, &path, None, KEY_READ, &mut key) } != ERROR_SUCCESS {
+        return String::new();
+    }
+    let name = HSTRING::from(value);
+    let mut buffer = [0u16; 1024];
+    let mut size = (buffer.len() * 2) as u32;
+    let read = unsafe {
+        RegQueryValueExW(key, &name, None, None, Some(buffer.as_mut_ptr() as *mut u8), Some(&mut size))
+    };
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
+    if read != ERROR_SUCCESS {
+        return String::new();
+    }
+    let end = buffer.iter().position(|c| *c == 0).unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..end])
+}
+
 pub fn registry_text(key_path: &str, value: &str) -> String {
     let mut key = HKEY::default();
     let path = HSTRING::from(key_path);

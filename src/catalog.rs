@@ -42,8 +42,33 @@ pub struct Details {
     pub date: String,
 }
 
+/// The original's connection settings start on "use the Windows proxy" (UseDefaultProxy is true).
+/// Windows keeps it as one address ("host:port") or one per kind ("http=a:80;https=b:81").
+/// Gives back the address to use for secure web requests, or nothing when there's no proxy.
+pub fn proxy_address(enabled: bool, server: &str) -> Option<String> {
+    let server = server.trim();
+    if !enabled || server.is_empty() {
+        return None;
+    }
+    let pick = |kind: &str| {
+        server
+            .split(';')
+            .find_map(|part| part.trim().strip_prefix(kind).and_then(|rest| rest.strip_prefix('=')))
+    };
+    let address = if server.contains('=') { pick("https").or_else(|| pick("http"))? } else { server };
+    let bare = address.split_once("://").map_or(address, |(_, rest)| rest);
+    (!bare.is_empty()).then(|| format!("http://{bare}"))
+}
+
+fn windows_proxy() -> Option<ureq::Proxy> {
+    const KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+    let enabled = crate::system::user_registry_number(KEY, "ProxyEnable") == Some(1);
+    let address = proxy_address(enabled, &crate::system::user_registry_text(KEY, "ProxyServer"))?;
+    ureq::Proxy::new(&address).ok()
+}
+
 pub fn client() -> ureq::Agent {
-    ureq::Agent::config_builder()
+    let mut config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(300)))
         .timeout_connect(Some(Duration::from_secs(15)))
         .user_agent(USER_AGENT)
@@ -51,9 +76,11 @@ pub fn client() -> ureq::Agent {
             ureq::tls::TlsConfig::builder()
                 .provider(ureq::tls::TlsProvider::NativeTls)
                 .build(),
-        )
-        .build()
-        .into()
+        );
+    if let Some(proxy) = windows_proxy() {
+        config = config.proxy(Some(proxy));
+    }
+    config.build().into()
 }
 
 fn encode(text: &str) -> String {
@@ -684,6 +711,20 @@ mod tests {
         assert!(is_newer("10.0.1", "9.9.9"));
         assert!(!is_newer("1.2.3", "1.2.3.0"));
         assert!(!is_newer("1.2", "1.10"));
+    }
+
+    #[test]
+    fn windows_proxy_address_is_read() {
+        assert_eq!(proxy_address(true, "proxy.corp:8080").as_deref(), Some("http://proxy.corp:8080"));
+        assert_eq!(
+            proxy_address(true, "http=a:80;https=b:8443;ftp=c:21").as_deref(),
+            Some("http://b:8443")
+        );
+        assert_eq!(proxy_address(true, "http=a:80;ftp=c:21").as_deref(), Some("http://a:80"));
+        assert_eq!(proxy_address(true, "http://p:3128").as_deref(), Some("http://p:3128"));
+        assert_eq!(proxy_address(true, "socks=s:1080"), None);
+        assert_eq!(proxy_address(false, "proxy.corp:8080"), None);
+        assert_eq!(proxy_address(true, "  "), None);
     }
 
     #[test]
