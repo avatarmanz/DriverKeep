@@ -5,7 +5,7 @@
 //! The request only names which updates to install. The helper looks for updates itself and
 //! installs the ones that match, so a request can never make it install anything it didn't find.
 
-use crate::system::{self, Settings};
+use crate::system;
 use crate::wu::ItemState;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -109,11 +109,6 @@ fn write_whole(name: &str, text: &str) -> bool {
     let Some(path) = file(name) else { return false };
     let temp = path.with_extension("tmp");
     std::fs::write(&temp, text).is_ok() && std::fs::rename(&temp, &path).is_ok()
-}
-
-/// True when the helper that runs as administrator is switched on in Settings.
-pub fn helper_available(settings: &Settings) -> bool {
-    settings.silent_install && system::task_exists()
 }
 
 /// Window side: leaves a request for the helper, and clears any older answer.

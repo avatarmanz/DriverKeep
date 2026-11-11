@@ -348,11 +348,14 @@ impl App {
                             }
                             return;
                         }
-                        let label = if open.len() == waiting { "Update Everything" } else { "Update Selected" };
-                        if primary(ui, label, !open.is_empty() && self.busy == Busy::Idle) {
-                            self.ask = Some(Ask::Update(open.clone()));
+                        // After a job only Scan shows; the update button returns once a scan has finished.
+                        if self.updates_ready {
+                            let label = if open.len() == waiting { "Update Everything" } else { "Update Selected" };
+                            if primary(ui, label, !open.is_empty() && self.busy == Busy::Idle) {
+                                self.ask = Some(Ask::Update(open.clone()));
+                            }
+                            ui.add_space(4.0);
                         }
-                        ui.add_space(4.0);
                         if scan_again_button(ui, self.busy == Busy::Idle) {
                             self.start_scan();
                         }

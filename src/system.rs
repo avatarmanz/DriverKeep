@@ -171,7 +171,16 @@ pub fn start_agent() {
     }
     if task_exists() {
         let _ = run_quiet("schtasks", &["/Run", "/TN", TASK_NAME]);
-    } else if let Some(exe) = exe_path() {
+        // The saved task can point at a copy of the program that has since moved or been removed,
+        // in which case it starts nothing. Give it a moment, then start the helper directly.
+        for _ in 0..8 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if agent_running() {
+                return;
+            }
+        }
+    }
+    if let Some(exe) = exe_path() {
         let _ = Command::new(exe).arg("--background").creation_flags(NO_WINDOW).spawn();
     }
 }

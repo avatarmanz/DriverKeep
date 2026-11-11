@@ -181,6 +181,10 @@ pub struct App {
     helper_job: Option<HelperJob>,
     /// Cancel Updates was pressed; the current update is finishing or being dropped.
     cancelling: bool,
+    /// What the running job was asked to install, so the sidebar can count down what's left.
+    job_ids: Vec<String>,
+    /// Update Everything is offered after a scan, and goes away once a job has run.
+    updates_ready: bool,
     checking_app: bool,
     app_check: Option<(String, AppCheck)>,
     preview_percent: f32,
@@ -264,6 +268,8 @@ impl App {
             windows_accent_read: None,
             helper_job: None,
             cancelling: false,
+            job_ids: Vec::new(),
+            updates_ready: true,
             checking_app: false,
             app_check: None,
             preview_percent: 60.0,
@@ -420,6 +426,7 @@ impl App {
         self.rebuild_rows();
         if !self.catalog_pending && !self.windows_update_pending && !self.software_pending {
             self.searched = true;
+            self.updates_ready = true;
             if self.busy == Busy::Scanning {
                 self.busy = Busy::Idle;
             }
@@ -686,6 +693,7 @@ impl App {
                 Event::Note(text) => self.notes.push(text),
                 Event::InstallFinished { restart, .. } => {
                     self.busy = Busy::Idle;
+                    self.updates_ready = false;
                     self.cancelling = false;
                     self.restart_needed |= restart;
                     self.reload_backups();
@@ -737,6 +745,7 @@ impl App {
         self.notes.clear();
         self.engine.reset_install();
         self.cancelling = false;
+        self.job_ids = ids.clone();
         self.busy = Busy::Installing;
         self.percent = 1;
         self.status = "Getting ready".into();
@@ -841,9 +850,8 @@ impl App {
     fn install_or_elevate(&mut self, ids: Vec<String>, skip_backup: bool, ctx: &egui::Context) {
         if self.admin {
             self.run_update(ids, skip_backup);
-        } else if handoff::helper_available(&self.settings) && self.hand_to_helper(&ids, skip_backup, false) {
-            // The helper's progress is picked up in poll_helper_job.
         } else if !self.hand_to_helper(&ids, skip_backup, true) {
+            // Windows' permission box starts an administrator copy; progress is read in poll_helper_job.
             self.message = Some(("Windows didn't give permission, so nothing was changed.".into(), true));
         }
         let _ = ctx;
@@ -868,6 +876,7 @@ impl App {
             system::start_agent();
         }
         self.notes.clear();
+        self.job_ids = ids.to_vec();
         self.busy = Busy::Installing;
         self.percent = 1;
         self.status = if worker {
@@ -950,6 +959,7 @@ impl App {
         if progress.finished {
             self.helper_job = None;
             self.busy = Busy::Idle;
+            self.updates_ready = false;
             self.cancelling = false;
             self.restart_needed |= progress.restart;
             self.reload_backups();
@@ -990,8 +1000,22 @@ impl App {
 
     fn rail(&mut self, ui: &mut egui::Ui) {
         ui.add_space(14.0);
-        let badge = self.open_rows();
         let installing = self.busy == Busy::Installing;
+        // During a job the number counts down from what it started with to what's left.
+        let badge = if installing {
+            self.rows
+                .iter()
+                .filter(|r| {
+                    self.job_ids.contains(&r.update.id)
+                        && matches!(
+                            r.state,
+                            ItemState::Waiting | ItemState::SavingBackup | ItemState::Downloading | ItemState::Installing
+                        )
+                })
+                .count()
+        } else {
+            self.open_rows()
+        };
         self.rail_item(ui, Page::Drivers, ICON_DRIVERS, "Updates", badge, installing);
         self.rail_item(ui, Page::Backups, ICON_BACKUP, "Backups", 0, false);
         self.rail_item(ui, Page::System, ICON_SYSTEM, "System Info", 0, false);
@@ -1013,13 +1037,19 @@ impl App {
         } else if response.hovered() {
             ui.painter().rect_filled(inner, 10.0, p.hover);
         }
-        ui.painter().text(
-            inner.center() - Vec2::new(0.0, 5.0),
-            Align2::CENTER_CENTER,
-            glyph,
-            icon_font(19.0),
-            if chosen { Color32::WHITE } else { p.soft },
-        );
+        let tint = if chosen { Color32::WHITE } else { p.soft };
+        let glyph_at = inner.center() - Vec2::new(0.0, 5.0);
+        if spinning {
+            // The two arrows turn around the middle while a job runs, and sit still otherwise.
+            let galley = ui.painter().layout_no_wrap(glyph.to_string(), icon_font(19.0), tint);
+            let angle = ui.input(|i| i.time) as f32 * 2.4;
+            let shape = egui::epaint::TextShape::new(glyph_at - galley.size() / 2.0, galley, tint)
+                .with_angle_and_anchor(angle, Align2::CENTER_CENTER);
+            ui.painter().add(shape);
+            ui.ctx().request_repaint();
+        } else {
+            ui.painter().text(glyph_at, Align2::CENTER_CENTER, glyph, icon_font(19.0), tint);
+        }
         ui.painter().text(
             inner.center() + Vec2::new(0.0, 17.0),
             Align2::CENTER_CENTER,
@@ -1027,16 +1057,7 @@ impl App {
             FontId::proportional(11.5),
             if chosen { Color32::WHITE } else { p.soft },
         );
-        if spinning {
-            // A job is running: a turning circle where the count would be, on every page.
-            let center = inner.center() + Vec2::new(15.0, -17.0);
-            let color = if chosen { Color32::WHITE } else { teal() };
-            ui.put(
-                egui::Rect::from_center_size(center, Vec2::splat(20.0)),
-                egui::Spinner::new().size(16.0).color(color),
-            );
-            ui.ctx().request_repaint();
-        } else if count > 0 {
+        if count > 0 {
             let center = inner.center() + Vec2::new(15.0, -17.0);
             ui.painter().circle_filled(center, 8.5, CRITICAL);
             ui.painter().text(
