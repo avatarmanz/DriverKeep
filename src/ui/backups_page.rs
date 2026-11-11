@@ -266,23 +266,20 @@ impl App {
         let (can_restore, cannot): (Vec<Record>, Vec<Record>) =
             records.iter().cloned().partition(|r| r.backup.is_some());
         let mut undo = None;
-        card().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(day.format("%A, %B %-d, %Y").to_string()).font(bold(15.0)));
-                if !records.is_empty() {
-                    pill(ui, &format!("{} change{}", records.len(), plural(records.len())), BLUE);
+        // The day is already picked in the calendar, and its change count is on the calendar too, so
+        // this card holds only the changes themselves. It's left out when there's nothing for it.
+        if records.is_empty() {
+            soft(ui, "Nothing was changed on this day.");
+            ui.add_space(8.0);
+        } else if !can_restore.is_empty() {
+            card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                for record in &can_restore {
+                    self.change_row(ui, record, &mut undo);
                 }
             });
-            if records.is_empty() {
-                ui.add_space(4.0);
-                ui.label(small("Nothing was changed on this day."));
-            }
-            for record in &can_restore {
-                self.change_row(ui, record, &mut undo);
-            }
-        });
-        ui.add_space(10.0);
+            ui.add_space(10.0);
+        }
         if let Some((path, id)) = undo {
             match backup::read_info(&path) {
                 Ok(info) => {
