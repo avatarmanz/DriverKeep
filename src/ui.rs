@@ -1020,7 +1020,7 @@ impl App {
         self.rail_item(ui, Page::Drivers, ICON_DRIVERS, "Updates", badge, installing);
         self.rail_item(ui, Page::Backups, ICON_BACKUP, "Backups", 0, false);
         self.rail_item(ui, Page::System, ICON_SYSTEM, "System Info", 0, false);
-        let space = ui.available_height() - 72.0;
+        let space = ui.available_height() - 80.0;
         ui.add_space(space.max(0.0));
         self.rail_item(ui, Page::Settings, ICON_SETTINGS, "Settings", 0, false);
     }
@@ -1028,7 +1028,7 @@ impl App {
     fn rail_item(&mut self, ui: &mut egui::Ui, page: Page, glyph: &str, label: &str, count: usize, spinning: bool) {
         let width = ui.available_width();
         // Tall enough that the count badge sits fully inside the highlighted box.
-        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 64.0), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 72.0), Sense::click());
         let inner = rect.shrink2(Vec2::new(6.0, 3.0));
         let chosen = self.page == page;
         let p = pal();
