@@ -460,6 +460,16 @@ pub fn beside(ui: &mut egui::Ui, reserve: f32, content: impl FnOnce(&mut egui::U
     });
 }
 
+/// Like `beside`, for a one-line message next to a button: the text is centered vertically in a row
+/// as tall as the button, so the two line up.
+pub fn beside_centered(ui: &mut egui::Ui, reserve: f32, content: impl FnOnce(&mut egui::Ui)) {
+    let width = (ui.available_width() - reserve).max(120.0);
+    ui.allocate_ui_with_layout(Vec2::new(width, 32.0), Layout::left_to_right(Align::Center), |ui| {
+        ui.set_max_width(width);
+        content(ui);
+    });
+}
+
 /// One line on the Settings page: icon, words, and its control on the right.
 pub fn setting(
     ui: &mut egui::Ui,

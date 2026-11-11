@@ -551,6 +551,8 @@ pub struct Settings {
     pub make_restore_point: bool,
     pub backup_before_update: bool,
     pub backup_folder: PathBuf,
+    /// Backups older than this many days are deleted. 0 keeps them all. New and existing users start at a year.
+    pub backup_keep_days: u32,
     pub ignored: Vec<String>,
     pub last_scan: Option<i64>,
     pub last_restore_point_day: String,
@@ -603,6 +605,7 @@ impl Default for Settings {
             make_restore_point: true,
             backup_before_update: true,
             backup_folder: default_backup_folder(),
+            backup_keep_days: 365,
             ignored: Vec::new(),
             last_scan: None,
             last_restore_point_day: String::new(),

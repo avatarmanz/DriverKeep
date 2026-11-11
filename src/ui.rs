@@ -150,6 +150,11 @@ pub struct App {
     tools: Option<(bool, bool)>,
     tools_installing: bool,
     settings_tab: settings_page::SettingsTab,
+    /// What is typed in the settings search box.
+    settings_search: String,
+    /// The days typed for backup retention, which only count once Apply is pressed.
+    retention_draft: String,
+    retention_note: String,
 
     filter: String,
     show: Show,
@@ -208,18 +213,27 @@ impl App {
         let (event_tx, events) = channel();
         let wake = cc.egui_ctx.clone();
         let engine = wu::start(event_tx, move || wake.request_repaint());
-        let settings = Settings::load();
+        let mut settings = Settings::load();
+        if options.plain {
+            // For screenshots only: the default teal look, without touching the saved settings.
+            settings.follow_windows_accent = false;
+            settings.accent = look::DEFAULT_ACCENT;
+        }
         let page = match options.page.as_deref() {
             Some("system") | Some("hardware") => Page::System,
             Some("backups") | Some("backup") | Some("restore") => Page::Backups,
             Some(page) if page.starts_with("settings") || page == "about" => Page::Settings,
             _ => Page::Drivers,
         };
+        if options.screenshot.is_none() {
+            backup::prune(&settings.backup_folder, settings.backup_keep_days);
+        }
         let backups = backup::list(&settings.backup_folder);
         let raw: Vec<Update> = system::read_cache(SCAN_CACHE).unwrap_or_default();
         let searched = settings.last_scan.is_some();
         let past_changes = history::load();
         let latest_change_day = past_changes.iter().map(|r| day_of(r.when)).max();
+        let retention_draft = settings.backup_keep_days.to_string();
         let mut app = Self {
             settings,
             page,
@@ -244,6 +258,9 @@ impl App {
             tools: None,
             tools_installing: false,
             settings_tab: settings_page::SettingsTab::from_page(options.page.as_deref()),
+            settings_search: String::new(),
+            retention_draft,
+            retention_note: String::new(),
             filter: String::new(),
             show: Show::All,
             show_system_items: false,
@@ -309,6 +326,12 @@ impl App {
         let on_open = app.options.screenshot.is_none() && app.settings.scan_on_open;
         if app.options.full_scan || app.options.resume.is_some() || on_open {
             app.start_scan();
+        }
+        if let Some(typed) = app.options.page.as_deref().and_then(|p| p.strip_prefix("settings-search=")) {
+            app.settings_search = typed.replace('+', " ");
+        }
+        if app.options.page.as_deref() == Some("banner") {
+            app.message = Some((format!("DriverKeep was updated to version {}.", env!("CARGO_PKG_VERSION")), false));
         }
         if app.options.page.as_deref() == Some("closing") {
             app.ask = Some(Ask::CloseWhileWorking);
@@ -1081,7 +1104,7 @@ impl App {
             card().fill(CAUTION.gamma_multiply(0.16)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    beside(ui, 190.0, |ui| {
+                    beside_centered(ui, 190.0, |ui| {
                         ui.label("Restart your computer to finish the driver changes.");
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1099,11 +1122,11 @@ impl App {
             card().fill(color.gamma_multiply(0.16)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    beside(ui, 90.0, |ui| {
+                    beside_centered(ui, 90.0, |ui| {
                         ui.label(text);
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        close = ui.small_button("Dismiss").clicked();
+                        close = secondary(ui, "Dismiss", true);
                     });
                 });
             });

@@ -268,6 +268,58 @@ pub fn list(folder: &Path) -> Vec<BackupFile> {
     found
 }
 
+/// Deletes backup files older than `days` days from the backup folder. 0 keeps everything.
+/// Only DriverKeep's own backup files are touched. Gives back how many were removed.
+pub fn prune(folder: &Path, days: u32) -> usize {
+    if days == 0 {
+        return 0;
+    }
+    let age = std::time::Duration::from_secs(u64::from(days) * 86_400);
+    let Some(limit) = std::time::SystemTime::now().checked_sub(age) else { return 0 };
+    let Ok(items) = fs::read_dir(folder) else { return 0 };
+    let mut removed = 0;
+    for item in items.flatten() {
+        let path = item.path();
+        if path.extension().and_then(|e| e.to_str()) != Some(FILE_EXTENSION) {
+            continue;
+        }
+        let old = item.metadata().and_then(|m| m.modified()).is_ok_and(|when| when < limit);
+        if old && fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    fn touch(folder: &Path, name: &str, days_old: u64) {
+        let path = folder.join(name);
+        let file = fs::File::create(&path).unwrap();
+        let when = std::time::SystemTime::now() - std::time::Duration::from_secs(days_old * 86_400);
+        file.set_modified(when).unwrap();
+    }
+
+    #[test]
+    fn only_old_backup_files_are_removed() {
+        let folder = std::env::temp_dir().join(format!("driverkeep-prune-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        touch(&folder, "old.drvbak", 40);
+        touch(&folder, "new.drvbak", 2);
+        touch(&folder, "notes.txt", 400);
+        assert_eq!(prune(&folder, 30), 1);
+        assert!(!folder.join("old.drvbak").exists());
+        assert!(folder.join("new.drvbak").exists());
+        assert!(folder.join("notes.txt").exists());
+        // Zero keeps everything.
+        assert_eq!(prune(&folder, 0), 0);
+        let _ = fs::remove_dir_all(&folder);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RestoreState {
     Restored { restart: bool, now_version: String },

@@ -439,6 +439,7 @@ fn worker(inbox: std::sync::mpsc::Receiver<Ask>, first_run: bool) {
         if !settings.wants_agent() {
             break;
         }
+        crate::backup::prune(&settings.backup_folder, settings.backup_keep_days);
         let now = chrono::Local::now();
         if settings.scan_overdue(now) || (startup_scan && settings.scan_at_startup) {
             restart_due |= scan_and_maybe_install(&engine, &events, &mut settings, false);
