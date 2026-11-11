@@ -308,7 +308,7 @@ impl App {
                     ui.label(RichText::new("Updates").font(bold(15.0)));
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if primary(ui, "Update Everything", true) {
+                        if primary_compact(ui, "Update Everything", true) {
                             if self.preview_percent >= 100.0 {
                                 self.preview_percent = 0.0;
                             }

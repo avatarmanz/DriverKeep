@@ -370,6 +370,16 @@ pub fn primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
     ui.add_enabled(enabled, button).clicked()
 }
 
+/// The accent-colored button at the same height as the plain buttons it sits beside in a page header.
+pub fn primary_compact(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
+    let fill = if enabled { teal() } else { pal().faint };
+    let button = egui::Button::new(RichText::new(text).color(Color32::WHITE))
+        .fill(fill)
+        .corner_radius(CornerRadius::same(7))
+        .min_size(Vec2::new(0.0, 32.0));
+    ui.add_enabled(enabled, button).clicked()
+}
+
 pub fn secondary(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
     let button = egui::Button::new(text)
         .fill(pal().hover)
@@ -378,22 +388,13 @@ pub fn secondary(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
     ui.add_enabled(enabled, button).clicked()
 }
 
-/// Sits beside Update All, so it's drawn the same height.
-pub fn scan_again_button(ui: &mut egui::Ui, enabled: bool) -> bool {
-    let button = egui::Button::new(RichText::new("Scan Again").font(bold(14.0)))
-        .fill(pal().hover)
-        .corner_radius(CornerRadius::same(8))
-        .min_size(Vec2::new(116.0, 38.0));
-    ui.add_enabled(enabled, button).clicked()
-}
-
-/// The same size as the main buttons, in red, for stopping a running job.
+/// The same height as the other header buttons, in red, for stopping a running job.
 pub fn cancel_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
     let fill = if enabled { CRITICAL } else { pal().faint };
-    let button = egui::Button::new(RichText::new(text).color(Color32::WHITE).font(bold(14.0)))
+    let button = egui::Button::new(RichText::new(text).color(Color32::WHITE))
         .fill(fill)
-        .corner_radius(CornerRadius::same(8))
-        .min_size(Vec2::new(150.0, 38.0));
+        .corner_radius(CornerRadius::same(7))
+        .min_size(Vec2::new(0.0, 32.0));
     ui.add_enabled(enabled, button).clicked()
 }
 

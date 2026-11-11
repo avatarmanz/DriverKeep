@@ -6,6 +6,7 @@ mod catalog;
 mod devices;
 mod handoff;
 mod history;
+mod restore;
 mod selfupdate;
 mod software;
 mod sysinfo;
@@ -29,6 +30,7 @@ pub struct Options {
     pub only: Option<String>,
     pub background: bool,
     pub install_job: bool,
+    pub restore_job: bool,
     pub plain: bool,
     pub open: bool,
     pub helper_task: Option<String>,
@@ -53,6 +55,7 @@ fn read_options() -> Options {
             "--only" => options.only = args.next(),
             "--background" => options.background = true,
             "--install-job" => options.install_job = true,
+            "--restore-job" => options.restore_job = true,
             "--plain" => options.plain = true,
             "--open" => options.open = true,
             "--helper-task" => options.helper_task = args.next(),
@@ -198,6 +201,10 @@ fn main() -> eframe::Result {
     }
     if let Some(state) = &options.helper_task {
         system::set_agent_task(state == "on");
+        return Ok(());
+    }
+    if options.restore_job {
+        restore::run_job();
         return Ok(());
     }
     if options.install_job {

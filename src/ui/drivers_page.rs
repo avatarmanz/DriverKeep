@@ -322,45 +322,39 @@ impl App {
             .map(|r| r.update.id.clone())
             .collect();
 
-        egui::Panel::bottom("update_all")
-            .show_separator_line(false)
-            .frame(Frame::new().inner_margin(Margin { top: 10, ..Default::default() }))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if self.windows_update_pending {
-                        ui.add(egui::Spinner::new().size(12.0).color(teal()));
-                        ui.label(small("Still checking Windows Update"));
-                    } else {
-                        let last = self.settings.last_scan.map(ago).unwrap_or_default();
-                        ui.label(small(format!("Last scan: {last}")));
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if installing {
-                            // Replaces both buttons until the job has stopped or finished.
-                            let text = if self.cancelling { "Cancelling…" } else { "Cancel Updates" };
-                            if cancel_button(ui, text, !self.cancelling) {
-                                self.cancel_updates();
-                            }
-                            return;
-                        }
-                        // After a job only Scan shows; the update button returns once a scan has finished.
-                        if self.updates_ready {
-                            let label = if open.len() == waiting { "Update Everything" } else { "Update Selected" };
-                            if primary(ui, label, !open.is_empty() && self.busy == Busy::Idle) {
-                                self.ask = Some(Ask::Update(open.clone()));
-                            }
-                            ui.add_space(4.0);
-                        }
-                        if scan_again_button(ui, self.busy == Busy::Idle) {
-                            self.start_scan();
-                        }
-                    });
-                });
-            });
-
+        // The buttons sit at the top right, like on the other main pages.
         ui.horizontal(|ui| {
             ui.label(RichText::new("Updates:").font(bold(20.0)));
             ui.label(RichText::new(format!("{waiting} available")).font(bold(20.0)).color(teal()));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if installing {
+                    // Replaces both buttons until the job has stopped or finished.
+                    let text = if self.cancelling { "Cancelling…" } else { "Cancel Updates" };
+                    if cancel_button(ui, text, !self.cancelling) {
+                        self.cancel_updates();
+                    }
+                    return;
+                }
+                // After a job only Scan shows; the update button returns once a scan has finished.
+                if self.updates_ready {
+                    let label = if open.len() == waiting { "Update Everything" } else { "Update Selected" };
+                    if primary_compact(ui, label, !open.is_empty() && self.busy == Busy::Idle) {
+                        self.ask = Some(Ask::Update(open.clone()));
+                    }
+                }
+                if secondary(ui, "Scan Again", self.busy == Busy::Idle) {
+                    self.start_scan();
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            if self.windows_update_pending {
+                ui.add(egui::Spinner::new().size(12.0).color(teal()));
+                ui.label(small("Still checking Windows Update"));
+            } else {
+                let last = self.settings.last_scan.map(ago).unwrap_or_default();
+                ui.label(small(format!("Last scan: {last}")));
+            }
         });
         ui.add_space(6.0);
         if installing {

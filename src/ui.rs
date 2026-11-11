@@ -3,6 +3,7 @@
 mod backups_page;
 mod drivers_page;
 mod look;
+mod restore_page;
 mod settings_page;
 mod system_page;
 
@@ -64,8 +65,16 @@ fn month_of(day: chrono::NaiveDate) -> chrono::NaiveDate {
 /// The widest the page content gets, in points. Wider windows get empty sides.
 const MAX_CONTENT_WIDTH: f32 = 1000.0;
 
+/// A System Restore request that's been handed to an administrator copy and is being waited for.
+struct RestoreJob {
+    id: u64,
+    started: std::time::Instant,
+    what: &'static str,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
+    Restore,
     Drivers,
     System,
     Backups,
@@ -186,6 +195,11 @@ pub struct App {
     helper_job: Option<HelperJob>,
     /// Cancel Updates was pressed; the current update is finishing or being dropped.
     cancelling: bool,
+    /// System Restore: what was last read, the job being waited for, and the typed space limit.
+    restore: Option<crate::restore::Info>,
+    restore_job: Option<RestoreJob>,
+    restore_gb: String,
+    restore_tried: bool,
     /// The Backups page was asked to scroll down to the saved backups.
     jump_to_backups: bool,
     /// What the running job was asked to install, so the sidebar can count down what's left.
@@ -221,6 +235,7 @@ impl App {
         }
         let page = match options.page.as_deref() {
             Some("system") | Some("hardware") => Page::System,
+            Some("restore-points") | Some("restore-demo") => Page::Restore,
             Some("backups") | Some("backup") | Some("restore") => Page::Backups,
             Some(page) if page.starts_with("settings") || page == "about" => Page::Settings,
             _ => Page::Drivers,
@@ -287,6 +302,10 @@ impl App {
             windows_accent_read: None,
             helper_job: None,
             cancelling: false,
+            restore: None,
+            restore_job: None,
+            restore_gb: String::new(),
+            restore_tried: false,
             jump_to_backups: false,
             job_ids: Vec::new(),
             updates_ready: true,
@@ -326,6 +345,24 @@ impl App {
         let on_open = app.options.screenshot.is_none() && app.settings.scan_on_open;
         if app.options.full_scan || app.options.resume.is_some() || on_open {
             app.start_scan();
+        }
+        if app.options.page.as_deref() == Some("restore-demo") {
+            // For screenshots: made-up restore points, since the real ones need administrator rights.
+            let info = App::sample_restore();
+            app.restore_gb = info.limit_gb().to_string();
+            app.restore = Some(info);
+        }
+        if let Some(day) = app
+            .options
+            .page
+            .as_deref()
+            .and_then(|p| p.strip_prefix("backups-day="))
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        {
+            // For screenshots: open the Backups page with one day picked.
+            app.page = Page::Backups;
+            app.selected_day = Some(day);
+            app.calendar_month = month_of(day);
         }
         if let Some(typed) = app.options.page.as_deref().and_then(|p| p.strip_prefix("settings-search=")) {
             app.settings_search = typed.replace('+', " ");
@@ -540,6 +577,7 @@ impl App {
 
     fn receive(&mut self, ctx: &egui::Context) {
         self.poll_helper_job(ctx);
+        self.poll_restore(ctx);
         while let Ok(work) = self.rx.try_recv() {
             match work {
                 Work::AppUpdate(result) => {
@@ -1047,7 +1085,8 @@ impl App {
             self.open_rows()
         };
         self.rail_item(ui, Page::Drivers, ICON_DRIVERS, "Updates", badge, installing);
-        self.rail_item(ui, Page::Backups, ICON_BACKUP, "Backups", 0, false);
+        self.rail_item(ui, Page::Backups, ICON_BACKUP, "Driver Backups", 0, false);
+        self.rail_item(ui, Page::Restore, ICON_SHIELD, "System Restore", 0, false);
         self.rail_item(ui, Page::System, ICON_SYSTEM, "System Info", 0, false);
         let space = ui.available_height() - 80.0;
         ui.add_space(space.max(0.0));
@@ -1525,7 +1564,7 @@ impl eframe::App for App {
 
         egui::Panel::left("rail")
             .resizable(false)
-            .exact_size(82.0)
+            .exact_size(100.0)
             .show_separator_line(false)
             .frame(Frame::new().fill(pal().rail))
             .show(ui, |ui| self.rail(ui));
@@ -1548,6 +1587,7 @@ impl eframe::App for App {
                         Page::Drivers => self.drivers_page(ui),
                         Page::System => self.system_page(ui),
                         Page::Backups => self.backups_page(ui),
+                        Page::Restore => self.restore_page(ui),
                         Page::Settings => self.settings_page(ui),
                     }
                 });

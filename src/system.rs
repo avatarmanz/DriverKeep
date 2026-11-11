@@ -85,7 +85,12 @@ pub fn run_quiet(program: &str, args: &[&str]) -> Result<(i32, String), String> 
 }
 
 pub fn open_windows_restore() {
-    let _ = Command::new("rstrui.exe").spawn();
+    // System Restore needs administrator rights. Started straight from here it would fail without a
+    // word, so it goes through the Windows shell, which shows the permission box first.
+    let _ = Command::new("cmd")
+        .args(["/c", "start", "", "rstrui.exe"])
+        .creation_flags(NO_WINDOW)
+        .spawn();
 }
 
 /// `seconds` of warning, so it can still be cancelled.
