@@ -23,16 +23,18 @@ pub const SKY: Color32 = Color32::from_rgb(0x5C, 0x9D, 0xF5);
 pub const DEFAULT_ACCENT: [u8; 3] = [0x2A, 0xAE, 0x9B];
 
 /// Ready-made accent colours, shown as swatches in Settings.
-pub const ACCENTS: [(&str, [u8; 3]); 8] = [
-    ("Teal", DEFAULT_ACCENT),
-    ("Blue", [0x4A, 0x6A, 0xE0]),
-    ("Sky", [0x2F, 0x8F, 0xE8]),
-    ("Purple", [0x8B, 0x5C, 0xF6]),
-    ("Pink", [0xD9, 0x46, 0x9B]),
-    ("Red", [0xE0, 0x4F, 0x4F]),
-    ("Orange", [0xE8, 0x7A, 0x2B]),
-    ("Green", [0x3B, 0xA8, 0x5C]),
+/// Each color comes as a dark, a neutral and a light shade, one row per color.
+pub const ACCENTS: [(&str, [[u8; 3]; 3]); 8] = [
+    ("Red", [[0xB0, 0x2A, 0x2A], [0xE0, 0x4F, 0x4F], [0xF0, 0x8A, 0x8A]]),
+    ("Orange", [[0xB8, 0x55, 0x0F], [0xE8, 0x7A, 0x2B], [0xF4, 0xA8, 0x6B]]),
+    ("Yellow", [[0xB0, 0x86, 0x0A], [0xE0, 0xB2, 0x1F], [0xF2, 0xD3, 0x6B]]),
+    ("Green", [[0x25, 0x7A, 0x3E], [0x3B, 0xA8, 0x5C], [0x7F, 0xD1, 0x95]]),
+    ("Teal", [[0x1B, 0x7F, 0x70], DEFAULT_ACCENT, [0x6F, 0xD0, 0xC2]]),
+    ("Blue", [[0x2D, 0x45, 0xB0], [0x4A, 0x6A, 0xE0], [0x8C, 0xA3, 0xF0]]),
+    ("Purple", [[0x66, 0x3C, 0xC4], [0x8B, 0x5C, 0xF6], [0xB9, 0x9C, 0xFA]]),
+    ("Pink", [[0xA8, 0x2F, 0x74], [0xD9, 0x46, 0x9B], [0xEA, 0x8F, 0xC3]]),
 ];
+pub const SHADE_NAMES: [&str; 3] = ["Dark", "Neutral", "Light"];
 
 static ACCENT: AtomicU32 = AtomicU32::new(0x2A_AE_9B);
 
@@ -383,6 +385,26 @@ pub fn scan_again_button(ui: &mut egui::Ui, enabled: bool) -> bool {
         .corner_radius(CornerRadius::same(8))
         .min_size(Vec2::new(116.0, 38.0));
     ui.add_enabled(enabled, button).clicked()
+}
+
+/// The same size as the main buttons, in red, for stopping a running job.
+pub fn cancel_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
+    let fill = if enabled { CRITICAL } else { pal().faint };
+    let button = egui::Button::new(RichText::new(text).color(Color32::WHITE).font(bold(14.0)))
+        .fill(fill)
+        .corner_radius(CornerRadius::same(8))
+        .min_size(Vec2::new(150.0, 38.0));
+    ui.add_enabled(enabled, button).clicked()
+}
+
+/// A clickable pill, shaped like the status pills.
+pub fn pill_button(ui: &mut egui::Ui, text: &str, color: Color32) -> bool {
+    let button = egui::Button::new(RichText::new(text).size(11.5).color(color))
+        .fill(color.gamma_multiply(0.16))
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(CornerRadius::same(9))
+        .min_size(Vec2::new(0.0, 20.0));
+    ui.add(button).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 pub fn pill(ui: &mut egui::Ui, text: &str, color: Color32) {

@@ -31,6 +31,8 @@ struct HelperJob {
     started: std::time::Instant,
     ids: Vec<String>,
     skip_backup: bool,
+    /// Updates ignored while the helper works, and whether the person asked to stop.
+    left_out: Vec<String>,
 }
 
 /// What the Check for Updates button found out.
@@ -175,6 +177,8 @@ pub struct App {
     windows_accent: Option<[u8; 3]>,
     windows_accent_read: Option<std::time::Instant>,
     helper_job: Option<HelperJob>,
+    /// Cancel Updates was pressed; the current update is finishing or being dropped.
+    cancelling: bool,
     checking_app: bool,
     app_check: Option<(String, AppCheck)>,
     preview_percent: f32,
@@ -257,6 +261,7 @@ impl App {
             windows_accent: None,
             windows_accent_read: None,
             helper_job: None,
+            cancelling: false,
             checking_app: false,
             app_check: None,
             preview_percent: 60.0,
@@ -679,6 +684,7 @@ impl App {
                 Event::Note(text) => self.notes.push(text),
                 Event::InstallFinished { restart, .. } => {
                     self.busy = Busy::Idle;
+                    self.cancelling = false;
                     self.restart_needed |= restart;
                     self.reload_backups();
                     self.refresh_devices(ctx);
@@ -727,6 +733,8 @@ impl App {
             return;
         }
         self.notes.clear();
+        self.engine.reset_install();
+        self.cancelling = false;
         self.busy = Busy::Installing;
         self.percent = 1;
         self.status = "Getting ready".into();
@@ -863,8 +871,43 @@ impl App {
             started: std::time::Instant::now(),
             ids: ids.to_vec(),
             skip_backup,
+            left_out: Vec::new(),
         });
+        self.cancelling = false;
         true
+    }
+
+    /// Stops the job: the update being downloaded is dropped, one already installing is allowed
+    /// to finish, and nothing after it starts. The buttons come back when it has stopped.
+    fn cancel_updates(&mut self) {
+        if self.busy != Busy::Installing || self.cancelling {
+            return;
+        }
+        self.cancelling = true;
+        self.status = "Cancelling. Waiting for the current update to stop or finish.".into();
+        if let Some(job) = &self.helper_job {
+            handoff::send_control(&handoff::Control { request: job.request, cancel: true, skip: job.left_out.clone() });
+        } else {
+            self.engine.cancel_install();
+        }
+    }
+
+    /// Hides an update for good. If it's part of the running job it's left out of that too.
+    fn ignore_update(&mut self, id: String) {
+        if self.busy == Busy::Installing {
+            self.engine.skip_update(&id);
+            if let Some(job) = &mut self.helper_job {
+                job.left_out.push(id.clone());
+                handoff::send_control(&handoff::Control {
+                    request: job.request,
+                    cancel: self.cancelling,
+                    skip: job.left_out.clone(),
+                });
+            }
+        }
+        self.settings.ignored.push(id);
+        self.settings.save();
+        self.rebuild_rows();
     }
 
     /// Follows the helper's progress file while it installs, and falls back to the permission
@@ -897,6 +940,7 @@ impl App {
         if progress.finished {
             self.helper_job = None;
             self.busy = Busy::Idle;
+            self.cancelling = false;
             self.restart_needed |= progress.restart;
             self.reload_backups();
             self.refresh_devices(ctx);
@@ -904,6 +948,7 @@ impl App {
             // Nothing for two minutes: the helper has stopped.
             self.helper_job = None;
             self.busy = Busy::Idle;
+            self.cancelling = false;
             self.message = Some(("The background helper stopped responding. Try the update again.".into(), true));
         }
     }

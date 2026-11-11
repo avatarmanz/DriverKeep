@@ -158,20 +158,25 @@ impl App {
             ui.label(small(note));
             ui.add_space(8.0);
             ui.add_enabled_ui(!follow, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
-                    for (name, rgb) in ACCENTS {
-                        let (rect, response) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
-                        ui.painter().circle_filled(rect.center(), 13.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
-                        if s.accent == rgb {
-                            ui.painter().circle_stroke(rect.center(), 15.5, Stroke::new(2.0, pal().text));
+                // A row for each color: dark, neutral, light.
+                for (name, shades) in ACCENTS {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        ui.add_sized([60.0, 32.0], egui::Label::new(small(name)));
+                        for (shade, rgb) in SHADE_NAMES.iter().zip(shades) {
+                            let (rect, response) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+                            ui.painter().circle_filled(rect.center(), 13.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+                            if s.accent == rgb {
+                                ui.painter().circle_stroke(rect.center(), 15.5, Stroke::new(2.0, pal().text));
+                            }
+                            let tip = format!("{shade} {}", name.to_lowercase());
+                            if response.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                s.accent = rgb;
+                                *changed = true;
+                            }
                         }
-                        if response.on_hover_text(name).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            s.accent = rgb;
-                            *changed = true;
-                        }
-                    }
-                });
+                    });
+                }
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("Your own color");
@@ -488,7 +493,9 @@ impl App {
                 };
                 status_bar(ui, text, color);
                 if *kind == AppCheck::Available {
-                    view = secondary(ui, "View Update", true);
+                    let busy = self.busy != super::Busy::Idle;
+                    let label = if self.busy == super::Busy::Installing { "Installing…" } else { "Install Update" };
+                    view = secondary(ui, label, !busy);
                 }
             }
             check = secondary(ui, if checking { "Checking…" } else { "Check for Updates" }, !checking);
@@ -497,7 +504,11 @@ impl App {
             self.check_app_update(ui.ctx());
         }
         if view {
-            self.page = super::Page::Drivers;
+            // Installs right here. Setup asks Windows for permission, then closes and reopens DriverKeep.
+            let own = self.rows.iter().find(|r| r.update.source == crate::wu::Source::GitHub).map(|r| r.update.id.clone());
+            if let Some(id) = own {
+                self.run_update(vec![id], false);
+            }
         }
         let s = &mut self.settings;
         setting(ui, ICON_DRIVERS, "Update DriverKeep automatically", "Each scan checks GitHub and installs any later version by itself.", |ui| {

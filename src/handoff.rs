@@ -114,8 +114,10 @@ pub fn helper_available(settings: &Settings) -> bool {
 
 /// Window side: leaves a request for the helper, and clears any older answer.
 pub fn send(request: &Request) -> bool {
-    if let Some(old) = file(PROGRESS_FILE) {
-        let _ = std::fs::remove_file(old);
+    for name in [PROGRESS_FILE, CONTROL_FILE] {
+        if let Some(old) = file(name) {
+            let _ = std::fs::remove_file(old);
+        }
     }
     match serde_json::to_string(request) {
         Ok(text) => write_whole(REQUEST_FILE, &text),
@@ -129,6 +131,31 @@ pub fn take_request() -> Option<Request> {
     let text = std::fs::read_to_string(&path).ok()?;
     let _ = std::fs::remove_file(&path);
     serde_json::from_str(&text).ok()
+}
+
+/// Changes of mind while the helper installs: stop, or leave particular updates out.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Control {
+    pub request: u64,
+    pub cancel: bool,
+    pub skip: Vec<String>,
+}
+
+const CONTROL_FILE: &str = "install-control.json";
+
+/// Window side.
+pub fn send_control(control: &Control) {
+    if let Ok(text) = serde_json::to_string(control) {
+        write_whole(CONTROL_FILE, &text);
+    }
+}
+
+/// Helper side: the window's latest wishes for this request.
+pub fn read_control(request: u64) -> Option<Control> {
+    let text = std::fs::read_to_string(file(CONTROL_FILE)?).ok()?;
+    let control: Control = serde_json::from_str(&text).ok()?;
+    (control.request == request).then_some(control)
 }
 
 /// Helper side: tells the window how far along things are.

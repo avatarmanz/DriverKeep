@@ -13,6 +13,44 @@ A fast, simple Windows app that keeps your computer up to date in one place.
 - **Light and dark mode.**
 - **Keeps itself current:** each scan checks this page for a later release, and Settings can install it automatically.
 
+## Screenshots
+
+**Updates**
+
+![Updates](screenshots/updates.png)
+
+| Light | OLED |
+| --- | --- |
+| ![Updates, light](screenshots/updates-light.png) | ![Updates, OLED](screenshots/updates-oled.png) |
+
+**Backups and System Info**
+
+| Backups | System Info |
+| --- | --- |
+| ![Backups](screenshots/backups.png) | ![System Info](screenshots/system-info.png) |
+
+**Settings**
+
+| General | Customization |
+| --- | --- |
+| ![General](screenshots/settings-general.png) | ![Customization](screenshots/settings-customization.png) |
+| **Scanning** | **Installing** |
+| ![Scanning](screenshots/settings-scanning.png) | ![Installing](screenshots/settings-installing.png) |
+| **Backup** | **About** |
+| ![Backup](screenshots/settings-backup.png) | ![About](screenshots/settings-about.png) |
+
+**Customization in light and OLED**
+
+| Light | OLED |
+| --- | --- |
+| ![Customization, light](screenshots/settings-customization-light.png) | ![Customization, OLED](screenshots/settings-customization-oled.png) |
+
+**Dialogs**
+
+| Closing while working | Install tools | Install without a backup |
+| --- | --- | --- |
+| ![Closing](screenshots/dialog-close.png) | ![Install tools](screenshots/dialog-tools.png) | ![No backup](screenshots/dialog-no-backup.png) |
+
 ## Where updates come from
 
 Only public, official sources are used:

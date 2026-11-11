@@ -335,6 +335,7 @@ fn install_requested(
         settings.last_restore_point_day = today;
         settings.save();
     }
+    engine.reset_install();
     let _ = engine.commands.send(Command::Install(InstallPlan {
         items,
         restore_point,
@@ -343,8 +344,24 @@ fn install_requested(
         require_backup: !settings.install_without_backup,
         automatic: false,
     }));
+    let mut skipped = 0;
     loop {
-        match events.recv() {
+        // The window may ask to stop, or to leave an update out, while this runs.
+        if let Some(control) = handoff::read_control(request.id) {
+            if control.cancel {
+                engine.cancel_install();
+            }
+            if control.skip.len() > skipped {
+                control.skip.iter().for_each(|id| engine.skip_update(id));
+                skipped = control.skip.len();
+            }
+        }
+        let event = match events.recv_timeout(std::time::Duration::from_millis(500)) {
+            Ok(event) => event,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(_) => return false,
+        };
+        match Ok::<Event, ()>(event) {
             Ok(Event::Status { percent, text }) => {
                 progress.percent = percent;
                 progress.text = text;

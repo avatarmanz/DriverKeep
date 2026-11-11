@@ -83,7 +83,7 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
             ui.add_enabled(!installing, egui::Checkbox::without_text(&mut row.selected));
             text_left = ui.cursor().left();
             // The status pill ("Downloading 100%") plus the ··· menu is the widest thing on the right.
-            beside(ui, 220.0, |ui| {
+            beside(ui, if installing { 360.0 } else { 220.0 }, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(row_name(row, &list)).size(14.0));
@@ -97,22 +97,31 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                 ui.label(small(row_detail(row, &list)));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.menu_button("···", |ui| {
-                    let retry = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
-                    if retry && ui.add_enabled(!installing, egui::Button::new("Try again")).clicked() {
-                        clicks.install = Some(vec![row.update.id.clone()]);
-                        ui.close();
-                    }
-                    let driver = row.update.kind == Kind::Driver && can_install(row);
-                    if driver && ui.add_enabled(!installing, egui::Button::new("Install without a backup")).clicked() {
-                        clicks.no_backup = Some(row.update.id.clone());
-                        ui.close();
-                    }
-                    if ui.button("Ignore this update").clicked() {
+                if installing {
+                    // While a job runs the menu only had this one choice, so it's a button instead.
+                    // An update that's already installing can't be taken back, so it isn't offered.
+                    let early = matches!(row.state, ItemState::Waiting | ItemState::SavingBackup | ItemState::Downloading);
+                    if early && pill_button(ui, "Ignore This Update", CAUTION) {
                         clicks.ignore = Some(row.update.id.clone());
-                        ui.close();
                     }
-                });
+                } else {
+                    ui.menu_button("···", |ui| {
+                        let retry = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
+                        if retry && ui.button("Try again").clicked() {
+                            clicks.install = Some(vec![row.update.id.clone()]);
+                            ui.close();
+                        }
+                        let driver = row.update.kind == Kind::Driver && can_install(row);
+                        if driver && ui.button("Install without a backup").clicked() {
+                            clicks.no_backup = Some(row.update.id.clone());
+                            ui.close();
+                        }
+                        if ui.button("Ignore this update").clicked() {
+                            clicks.ignore = Some(row.update.id.clone());
+                            ui.close();
+                        }
+                    });
+                }
                 match state_pill(row) {
                     Some((text, color)) => pill(ui, &text, color),
                     None => {
@@ -328,6 +337,14 @@ impl App {
                         ui.label(small(format!("Last scan: {last}")));
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if installing {
+                            // Replaces both buttons until the job has stopped or finished.
+                            let text = if self.cancelling { "Cancelling…" } else { "Cancel Updates" };
+                            if cancel_button(ui, text, !self.cancelling) {
+                                self.cancel_updates();
+                            }
+                            return;
+                        }
                         let label = if open.len() == waiting { "Update Everything" } else { "Update Selected" };
                         if primary(ui, label, !open.is_empty() && self.busy == Busy::Idle) {
                             self.ask = Some(Ask::Update(open.clone()));
@@ -385,9 +402,7 @@ impl App {
             }
         }
         if let Some(id) = clicks.ignore {
-            self.settings.ignored.push(id);
-            self.settings.save();
-            self.rebuild_rows();
+            self.ignore_update(id);
         }
     }
 

@@ -148,14 +148,43 @@ pub enum Event {
 pub struct Engine {
     pub commands: Sender<Command>,
     pub stop: Arc<AtomicBool>,
+    /// Updates to leave out of the install that's running now (ignored at the last minute).
+    pub skip: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
+
+impl Engine {
+    /// Asks the install in progress to stop: the current download is dropped, an install that has
+    /// already begun finishes, and nothing after it starts.
+    pub fn cancel_install(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+
+    pub fn skip_update(&self, id: &str) {
+        if let Ok(mut skip) = self.skip.lock() {
+            skip.insert(id.to_string());
+        }
+    }
+
+    /// Call before starting an install so an earlier cancel or ignore doesn't carry over.
+    pub fn reset_install(&self) {
+        self.stop.store(false, Ordering::SeqCst);
+        if let Ok(mut skip) = self.skip.lock() {
+            skip.clear();
+        }
+    }
+}
+
+/// What an update shows when it was stopped on request.
+pub const CANCELLED: &str = "Cancelled.";
 
 pub fn start(events: Sender<Event>, wake: impl Fn() + Send + Sync + Clone + 'static) -> Engine {
     let (commands, inbox) = channel();
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
-    std::thread::spawn(move || worker(inbox, events, wake, flag));
-    Engine { commands, stop }
+    let skip = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let skipping = skip.clone();
+    std::thread::spawn(move || worker(inbox, events, wake, flag, skipping));
+    Engine { commands, stop, skip }
 }
 
 /// Everything found, one best update per device, ignored ones left out.
@@ -214,6 +243,7 @@ fn worker(
     events: Sender<Event>,
     wake: impl Fn() + Send + Sync + Clone + 'static,
     stop: Arc<AtomicBool>,
+    skip: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 ) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED).ok();
@@ -282,7 +312,7 @@ fn worker(
                         last = Some((session, updates));
                     }
                 }
-                let outcome = install(last.as_ref(), plan, &events, &wake);
+                let outcome = install(last.as_ref(), plan, &events, &wake, &stop, &skip);
                 let _ = events.send(Event::InstallFinished {
                     restart: outcome.0,
                     installed: outcome.1,
@@ -416,6 +446,7 @@ fn windows_update_install(
     update: &IUpdate,
     note: &impl Fn(ItemState),
     progress: &impl Fn(u32),
+    abort: &impl Fn() -> bool,
 ) -> Result<bool, String> {
     use windows::Win32::System::Variant::VARIANT;
     let none = None::<&windows::core::IUnknown>;
@@ -434,13 +465,22 @@ fn windows_update_install(
             let job = downloader
                 .BeginDownload(none, none, &VARIANT::default())
                 .map_err(|e| format!("Download failed ({e})"))?;
+            let mut asked = false;
             while !job.IsCompleted().map(|v| v.as_bool()).unwrap_or(true) {
+                if !asked && abort() {
+                    asked = true;
+                    let _ = job.RequestAbort();
+                }
                 if let Ok(done) = job.GetProgress().and_then(|p| p.PercentComplete()) {
                     progress(done.clamp(0, 100) as u32);
                 }
                 std::thread::sleep(wait);
             }
-            let result = downloader.EndDownload(&job).map_err(|e| format!("Download failed ({e})"))?;
+            let ended = downloader.EndDownload(&job);
+            if asked || abort() {
+                return Err(CANCELLED.to_string());
+            }
+            let result = ended.map_err(|e| format!("Download failed ({e})"))?;
             let code = result.ResultCode().map_err(|e| e.to_string())?;
             if code != orcSucceeded && code != orcSucceededWithErrors {
                 return Err(format!("Download failed (code {})", code.0));
@@ -474,6 +514,8 @@ fn install(
     mut plan: InstallPlan,
     events: &Sender<Event>,
     wake: &impl Fn(),
+    stop: &AtomicBool,
+    skip: &std::sync::Mutex<std::collections::HashSet<String>>,
 ) -> (bool, usize, usize) {
     // The package manager goes near the end, and DriverKeep last because updating it closes this copy.
     plan.items.sort_by_key(|item| {
@@ -506,9 +548,16 @@ fn install(
     let mut failed = 0;
     let mut records = Vec::new();
     let count = plan.items.len().max(1) as u32;
+    let skipped = |id: &str| skip.lock().is_ok_and(|s| s.contains(id));
     for (position, item) in plan.items.iter().enumerate() {
         let update = &item.update;
         let id = update.id.clone();
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        if skipped(&id) {
+            continue;
+        }
         let note = |state| {
             let _ = events.send(Event::Item { id: id.clone(), state });
             wake();
@@ -548,7 +597,10 @@ fn install(
 
         let result = match update.source {
             Source::WindowsUpdate => match found.and_then(|(s, u)| Some((s, find_update(u, &id)?))) {
-                Some((session, chosen)) => windows_update_install(session, &chosen, &note, &progress),
+                Some((session, chosen)) => {
+                    let abort = || stop.load(Ordering::SeqCst) || skipped(&id);
+                    windows_update_install(session, &chosen, &note, &progress, &abort)
+                }
                 None => Err("Windows Update no longer offers this driver.".to_string()),
             },
             Source::Catalog => {
@@ -605,6 +657,7 @@ fn install(
                 // Saved straight away, so a run that gets interrupted keeps its record.
                 history::add(std::mem::take(&mut records));
             }
+            Err(error) if error == CANCELLED => note(ItemState::Skipped(CANCELLED.to_string())),
             Err(error) => {
                 failed += 1;
                 note(ItemState::Failed(error));
@@ -616,7 +669,7 @@ fn install(
     }
     history::add(records);
     system::keep_awake(false);
-    status(100, "Finished".into());
+    status(100, if stop.load(Ordering::SeqCst) { "Cancelled" } else { "Finished" }.into());
     (restart, installed, failed)
 }
 
