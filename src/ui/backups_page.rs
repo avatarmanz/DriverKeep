@@ -201,7 +201,7 @@ impl App {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     for column in 0..7 {
                         let slot = week * 7 + column;
-                        let (rect, response) = ui.allocate_exact_size(Vec2::new(cell_w, 48.0), Sense::click());
+                        let (rect, response) = ui.allocate_exact_size(Vec2::new(cell_w, 58.0), Sense::click());
                         if slot < lead || slot >= lead + days_in {
                             continue;
                         }
@@ -227,21 +227,30 @@ impl App {
                         }
                         let number_font = if changes > 0 { bold(14.0) } else { FontId::proportional(14.0) };
                         let number_color = if changes > 0 || picked { p.text } else { p.soft };
-                        painter.text(
-                            inner.left_top() + Vec2::new(9.0, 5.0),
-                            Align2::LEFT_TOP,
+                        // The date number and the change count share one line, centered in the day,
+                        // with a clear gap between them.
+                        let middle = inner.left_center();
+                        let number_box = painter.text(
+                            middle + Vec2::new(12.0, 0.0),
+                            Align2::LEFT_CENTER,
                             day.day().to_string(),
                             number_font,
                             number_color,
                         );
                         if changes > 0 {
-                            let text = format!("{changes} change{}", plural(changes));
-                            painter.circle_filled(inner.left_bottom() + Vec2::new(13.0, -10.0), 3.5, teal());
+                            let small_font = FontId::proportional(11.5);
+                            let full = format!("{changes} change{}", plural(changes));
+                            let start = number_box.right() + 14.0;
+                            let room = inner.right() - 8.0 - (start + 11.0);
+                            // In a narrow window the word is dropped and just the number stays.
+                            let width = painter.layout_no_wrap(full.clone(), small_font.clone(), p.soft).size().x;
+                            let text = if width <= room { full } else { changes.to_string() };
+                            painter.circle_filled(egui::pos2(start + 3.5, middle.y), 3.5, teal());
                             painter.text(
-                                inner.left_bottom() + Vec2::new(21.0, -10.0),
+                                egui::pos2(start + 11.0, middle.y),
                                 Align2::LEFT_CENTER,
                                 text,
-                                FontId::proportional(11.5),
+                                small_font,
                                 p.soft,
                             );
                         }
