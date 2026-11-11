@@ -349,6 +349,9 @@ impl App {
         setting(ui, ICON_SCAN, "Scan when the helper starts", "One background scan each time your PC starts.", |ui| {
             *changed |= toggle(ui, &mut s.scan_at_startup);
         });
+        setting(ui, ICON_SCAN, "Scan when DriverKeep opens", "Off, it opens to the Scan button and waits for you.", |ui| {
+            *changed |= toggle(ui, &mut s.scan_on_open);
+        });
     }
 
     fn installing_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool) {

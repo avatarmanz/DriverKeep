@@ -299,8 +299,9 @@ impl App {
         app.refresh_devices(&cc.egui_ctx);
         app.refresh_system(&cc.egui_ctx);
         app.refresh_tools(&cc.egui_ctx);
-        let overdue = app.options.screenshot.is_none() && app.settings.scan_overdue(chrono::Local::now());
-        if app.options.full_scan || app.options.resume.is_some() || overdue {
+        // Scheduled scans belong to the background helper; the window only searches on open if asked.
+        let on_open = app.options.screenshot.is_none() && app.settings.scan_on_open;
+        if app.options.full_scan || app.options.resume.is_some() || on_open {
             app.start_scan();
         }
         if app.options.page.as_deref() == Some("closing") {
@@ -1038,7 +1039,7 @@ impl App {
             ui.painter().rect_filled(inner, 10.0, p.hover);
         }
         let tint = if chosen { Color32::WHITE } else { p.soft };
-        let glyph_at = inner.center() - Vec2::new(0.0, 5.0);
+        let glyph_at = inner.center() - Vec2::new(0.0, 9.0);
         if spinning {
             // The two arrows turn around the middle while a job runs, and sit still otherwise.
             let galley = ui.painter().layout_no_wrap(glyph.to_string(), icon_font(19.0), tint);
@@ -1051,22 +1052,19 @@ impl App {
             ui.painter().text(glyph_at, Align2::CENTER_CENTER, glyph, icon_font(19.0), tint);
         }
         ui.painter().text(
-            inner.center() + Vec2::new(0.0, 17.0),
+            inner.center() + Vec2::new(0.0, 13.0),
             Align2::CENTER_CENTER,
             label,
             FontId::proportional(11.5),
             if chosen { Color32::WHITE } else { p.soft },
         );
         if count > 0 {
-            let center = inner.center() + Vec2::new(15.0, -17.0);
-            ui.painter().circle_filled(center, 8.5, CRITICAL);
-            ui.painter().text(
-                center,
-                Align2::CENTER_CENTER,
-                count.to_string(),
-                FontId::proportional(10.5),
-                Color32::WHITE,
-            );
+            let center = inner.center() + Vec2::new(15.0, -19.0);
+            // The accent color, like the "4 available" in the header. On the selected tab, which is
+            // already the accent color, it flips to a white circle with an accent number.
+            let (fill, ink) = if chosen { (Color32::WHITE, teal()) } else { (teal(), Color32::WHITE) };
+            ui.painter().circle_filled(center, 8.5, fill);
+            ui.painter().text(center, Align2::CENTER_CENTER, count.to_string(), FontId::proportional(10.5), ink);
         }
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             self.page = page;

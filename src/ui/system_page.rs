@@ -13,8 +13,10 @@ impl App {
         let (now, past, needs) = self.counts();
         ui.horizontal(|ui| {
             let name = self.system.as_ref().map(|s| s.computer.clone()).unwrap_or_default();
-            let title = if name.is_empty() { "System".to_string() } else { name };
-            ui.label(RichText::new(title).font(bold(20.0)));
+            // Same look as "Updates: 4 available": a label, then the value in the accent color.
+            ui.label(RichText::new("Model:").font(bold(20.0)));
+            let model = if name.is_empty() { "Reading…".to_string() } else { name };
+            ui.label(RichText::new(model).font(bold(20.0)).color(teal()));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if secondary(ui, "Save as…", !self.devices.is_empty()) {
                     self.save_list();

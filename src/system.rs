@@ -538,6 +538,8 @@ pub struct Settings {
     pub silent_windows: bool,
     pub silent_software: bool,
     pub scan_at_startup: bool,
+    /// Search as soon as the window opens. Off, it opens to the Scan button.
+    pub scan_on_open: bool,
     pub notify: bool,
     pub silent_install: bool,
     pub install_from: u32,
@@ -589,6 +591,7 @@ impl Default for Settings {
             silent_windows: false,
             silent_software: false,
             scan_at_startup: false,
+            scan_on_open: false,
             notify: true,
             silent_install: false,
             install_from: 1,
