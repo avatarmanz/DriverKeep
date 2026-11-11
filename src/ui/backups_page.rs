@@ -64,8 +64,9 @@ impl App {
             if self.choosing {
                 self.choose_drivers(ui);
             }
-            self.recent_changes(ui);
+            let cannot = self.recent_changes(ui);
             self.backup_list(ui);
+            self.cannot_restore_list(ui, &cannot);
         });
     }
 
@@ -149,9 +150,9 @@ impl App {
 
     /// A month calendar of everything DriverKeep changed. Picking a day lists what happened
     /// that day, with Put Back wherever a backup was saved first.
-    fn recent_changes(&mut self, ui: &mut egui::Ui) {
+    fn recent_changes(&mut self, ui: &mut egui::Ui) -> Vec<Record> {
         if self.history.is_empty() {
-            return;
+            return Vec::new();
         }
         heading(ui, "Changes");
         ui.add_space(2.0);
@@ -256,12 +257,14 @@ impl App {
         let Some(day) = self.selected_day else {
             soft(ui, "Pick a day to see what changed and put things back.");
             ui.add_space(8.0);
-            return;
+            return Vec::new();
         };
-        let mut records: Vec<Record> =
+        let records: Vec<Record> =
             self.history.iter().filter(|r| super::day_of(r.when) == day).cloned().collect();
-        // Changes that can be put back come first; the ones that can't go below them.
-        records.sort_by_key(|r| r.backup.is_none());
+        // Changes that can be put back stay in this card. The ones that can't are handed back, to be
+        // listed lower down, below the saved backups.
+        let (can_restore, cannot): (Vec<Record>, Vec<Record>) =
+            records.iter().cloned().partition(|r| r.backup.is_some());
         let mut undo = None;
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -275,44 +278,8 @@ impl App {
                 ui.add_space(4.0);
                 ui.label(small("Nothing was changed on this day."));
             }
-            for record in &records {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    // Room is kept on the right for the button or note, so a long name is cut short
-                    // instead of running underneath it.
-                    let right_side = if record.backup.is_some() {
-                        110.0
-                    } else {
-                        let note = ui.painter().layout_no_wrap(
-                            NOT_RESTORABLE.to_string(),
-                            FontId::proportional(12.0),
-                            pal().soft,
-                        );
-                        note.size().x + 28.0
-                    };
-                    beside(ui, right_side, |ui| {
-                        ui.spacing_mut().item_spacing.y = 1.0;
-                        ui.label(RichText::new(record.device.clone()).size(13.5));
-                        let tag = if record.automatic { "automatic, " } else { "" };
-                        let from = if record.from_version.is_empty() { "none" } else { &record.from_version };
-                        let time = chrono::DateTime::from_timestamp(record.when, 0)
-                            .map(|t| t.with_timezone(&chrono::Local).format("%-I:%M %p").to_string())
-                            .unwrap_or_default();
-                        ui.label(small(format!(
-                            "{from}  →  {}   ({tag}{})   {time}",
-                            record.to_version, record.source
-                        )));
-                    });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if let Some(path) = &record.backup {
-                            if secondary(ui, "Put Back", self.busy == Busy::Idle) {
-                                undo = Some((PathBuf::from(path), record.instance_id.clone()));
-                            }
-                        } else {
-                            ui.label(small(NOT_RESTORABLE));
-                        }
-                    });
-                });
+            for record in &can_restore {
+                self.change_row(ui, record, &mut undo);
             }
         });
         ui.add_space(10.0);
@@ -327,6 +294,60 @@ impl App {
                 }
             }
         }
+        cannot
+    }
+
+    /// One change: its name and versions, with Put Back where a backup was saved first, or a note
+    /// where there wasn't.
+    fn change_row(&self, ui: &mut egui::Ui, record: &Record, undo: &mut Option<(PathBuf, String)>) {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            // Room is kept on the right for the button or note, so a long name is cut short
+            // instead of running underneath it.
+            let right_side = if record.backup.is_some() {
+                110.0
+            } else {
+                let note = ui.painter().layout_no_wrap(NOT_RESTORABLE.to_string(), FontId::proportional(12.0), pal().soft);
+                note.size().x + 28.0
+            };
+            beside(ui, right_side, |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.label(RichText::new(record.device.clone()).size(13.5));
+                let tag = if record.automatic { "automatic, " } else { "" };
+                let from = if record.from_version.is_empty() { "none" } else { &record.from_version };
+                let time = chrono::DateTime::from_timestamp(record.when, 0)
+                    .map(|t| t.with_timezone(&chrono::Local).format("%-I:%M %p").to_string())
+                    .unwrap_or_default();
+                ui.label(small(format!("{from}  →  {}   ({tag}{})   {time}", record.to_version, record.source)));
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if let Some(path) = &record.backup {
+                    if secondary(ui, "Put Back", self.busy == Busy::Idle) {
+                        *undo = Some((PathBuf::from(path), record.instance_id.clone()));
+                    }
+                } else {
+                    ui.label(small(NOT_RESTORABLE));
+                }
+            });
+        });
+    }
+
+    /// The day's changes that have no backup, kept below the saved backups.
+    fn cannot_restore_list(&self, ui: &mut egui::Ui, records: &[Record]) {
+        if records.is_empty() {
+            return;
+        }
+        ui.add_space(8.0);
+        ui.label(RichText::new("Cannot be restored").font(bold(16.0)));
+        ui.add_space(2.0);
+        let mut ignored = None;
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for record in records {
+                self.change_row(ui, record, &mut ignored);
+            }
+        });
+        ui.add_space(8.0);
     }
 
     fn backup_list(&mut self, ui: &mut egui::Ui) {
