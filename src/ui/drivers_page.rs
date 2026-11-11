@@ -274,7 +274,7 @@ impl App {
                             ui.label(small("Up to date"));
                             return;
                         }
-                        if ui.small_button(if folded { "Show" } else { "Hide" }).clicked() {
+                        if secondary(ui, if folded { "Show" } else { "Hide" }, true) {
                             clicks.fold = Some(kind);
                         }
                         // Hidden during a job, since that group is already being updated.
@@ -423,7 +423,7 @@ impl App {
                 ui.label(RichText::new(format!("Drivers up to date ({})", fine.len())).size(14.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     // The same button as Hide on the other sections, so it's clear it can be clicked.
-                    toggle = ui.small_button(if self.show_uptodate { "Hide" } else { "Show" }).clicked();
+                    toggle = secondary(ui, if self.show_uptodate { "Hide" } else { "Show" }, true);
                 });
             });
             if toggle || header.response.interact(Sense::click()).clicked() {

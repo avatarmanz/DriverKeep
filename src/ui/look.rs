@@ -403,7 +403,7 @@ pub fn pill_button(ui: &mut egui::Ui, text: &str, color: Color32) -> bool {
         .fill(color.gamma_multiply(0.16))
         .stroke(egui::Stroke::NONE)
         .corner_radius(CornerRadius::same(9))
-        .min_size(Vec2::new(0.0, 20.0));
+        .min_size(Vec2::new(0.0, 32.0));
     ui.add(button).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
