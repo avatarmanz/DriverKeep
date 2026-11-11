@@ -24,6 +24,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+/// The calendar day, in this computer's time zone, that a saved time falls on.
+fn day_of(unix: i64) -> chrono::NaiveDate {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_opt(unix, 0)
+        .single()
+        .map(|t| t.date_naive())
+        .unwrap_or_else(|| chrono::Local::now().date_naive())
+}
+
+/// The first day of the month a date is in.
+fn month_of(day: chrono::NaiveDate) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    day.with_day(1).unwrap_or(day)
+}
+
 /// The widest the page content gets, in points. Wider windows get empty sides.
 const MAX_CONTENT_WIDTH: f32 = 1000.0;
 
@@ -44,6 +60,8 @@ enum Show {
 }
 
 enum Work {
+    /// The answer to Settings > About > Check for Updates.
+    AppUpdate(Result<Option<Update>, String>),
     Devices(Vec<Device>),
     System(SystemInfo),
     Progress(u32, String),
@@ -137,7 +155,11 @@ pub struct App {
     engine: wu::Engine,
     events: Receiver<Event>,
 
-    logo: egui::TextureHandle,
+    windows_accent: Option<[u8; 3]>,
+    windows_accent_read: Option<std::time::Instant>,
+    checking_app: bool,
+    calendar_month: chrono::NaiveDate,
+    selected_day: Option<chrono::NaiveDate>,
     spin: f32,
     frames: u32,
     shot_sent: bool,
@@ -161,6 +183,8 @@ impl App {
         let backups = backup::list(&settings.backup_folder);
         let raw: Vec<Update> = system::read_cache(SCAN_CACHE).unwrap_or_default();
         let searched = settings.last_scan.is_some();
+        let past_changes = history::load();
+        let latest_change_day = past_changes.iter().map(|r| day_of(r.when)).max();
         let mut app = Self {
             settings,
             page,
@@ -197,7 +221,7 @@ impl App {
             open_backup: None,
             restore_picks: HashSet::new(),
             results: Vec::new(),
-            history: history::load(),
+            history: past_changes,
             restart_needed: false,
             ask: None,
             closing: false,
@@ -207,7 +231,11 @@ impl App {
             rx,
             engine,
             events,
-            logo: cc.egui_ctx.load_texture("logo", logo_image(), egui::TextureOptions::LINEAR),
+            windows_accent: None,
+            windows_accent_read: None,
+            checking_app: false,
+            calendar_month: month_of(latest_change_day.unwrap_or_else(|| chrono::Local::now().date_naive())),
+            selected_day: latest_change_day,
             spin: 0.0,
             frames: 0,
             shot_sent: false,
@@ -236,6 +264,19 @@ impl App {
             std::thread::spawn(move || system::apply_startup(&settings));
         }
         app
+    }
+
+    fn check_app_update(&mut self, ctx: &egui::Context) {
+        if self.checking_app {
+            return;
+        }
+        self.checking_app = true;
+        let tx = self.tx.clone();
+        let wake = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Work::AppUpdate(crate::selfupdate::check_now()));
+            wake.request_repaint();
+        });
     }
 
     fn refresh_devices(&self, ctx: &egui::Context) {
@@ -414,6 +455,25 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(work) = self.rx.try_recv() {
             match work {
+                Work::AppUpdate(result) => {
+                    self.checking_app = false;
+                    self.message = Some(match result {
+                        Ok(Some(update)) => {
+                            let text = format!(
+                                "DriverKeep {} is available. It's at the top of the Updates page.",
+                                update.version
+                            );
+                            self.raw.retain(|u| u.source != Source::GitHub);
+                            self.raw.push(update);
+                            self.rebuild_rows();
+                            self.page = Page::Drivers;
+                            self.flash_app_update = true;
+                            (text, false)
+                        }
+                        Ok(None) => (format!("You have the latest version ({}).", crate::selfupdate::CURRENT), false),
+                        Err(error) => (format!("Couldn't check for a new version: {error}"), true),
+                    });
+                }
                 Work::Devices(list) => {
                     self.devices = list;
                     self.pick_default_backups();
@@ -733,24 +793,20 @@ impl App {
 
     fn rail(&mut self, ui: &mut egui::Ui) {
         ui.add_space(14.0);
-        ui.vertical_centered(|ui| {
-            // The same picture as the taskbar and title bar icon.
-            ui.add(egui::Image::new(&self.logo).fit_to_exact_size(Vec2::splat(34.0)));
-        });
-        ui.add_space(16.0);
         let badge = self.open_rows();
         self.rail_item(ui, Page::Drivers, ICON_DRIVERS, "Updates", badge);
-        self.rail_item(ui, Page::System, ICON_SYSTEM, "System", 0);
         self.rail_item(ui, Page::Backups, ICON_BACKUP, "Backups", 0);
-        let space = ui.available_height() - 66.0;
+        self.rail_item(ui, Page::System, ICON_SYSTEM, "System Info", 0);
+        let space = ui.available_height() - 72.0;
         ui.add_space(space.max(0.0));
         self.rail_item(ui, Page::Settings, ICON_SETTINGS, "Settings", 0);
     }
 
     fn rail_item(&mut self, ui: &mut egui::Ui, page: Page, glyph: &str, label: &str, count: usize) {
         let width = ui.available_width();
-        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 56.0), Sense::click());
-        let inner = rect.shrink2(Vec2::new(8.0, 3.0));
+        // Tall enough that the count badge sits fully inside the highlighted box.
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 64.0), Sense::click());
+        let inner = rect.shrink2(Vec2::new(6.0, 3.0));
         let chosen = self.page == page;
         let p = pal();
         if chosen {
@@ -759,21 +815,21 @@ impl App {
             ui.painter().rect_filled(inner, 10.0, p.hover);
         }
         ui.painter().text(
-            inner.center() - Vec2::new(0.0, 9.0),
+            inner.center() - Vec2::new(0.0, 5.0),
             Align2::CENTER_CENTER,
             glyph,
             icon_font(19.0),
             if chosen { teal() } else { p.soft },
         );
         ui.painter().text(
-            inner.center() + Vec2::new(0.0, 13.0),
+            inner.center() + Vec2::new(0.0, 17.0),
             Align2::CENTER_CENTER,
             label,
             FontId::proportional(11.5),
             if chosen { p.text } else { p.soft },
         );
         if count > 0 {
-            let center = inner.center() + Vec2::new(14.0, -19.0);
+            let center = inner.center() + Vec2::new(15.0, -17.0);
             ui.painter().circle_filled(center, 8.5, CRITICAL);
             ui.painter().text(
                 center,
@@ -793,7 +849,9 @@ impl App {
             card().fill(CAUTION.gamma_multiply(0.16)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.label("Restart your computer to finish the driver changes.");
+                    beside(ui, 190.0, |ui| {
+                        ui.label("Restart your computer to finish the driver changes.");
+                    });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if secondary(ui, "Restart in 1 minute", true) {
                             system::restart_windows(60, "DriverKeep is finishing driver updates.");
@@ -809,7 +867,9 @@ impl App {
             card().fill(color.gamma_multiply(0.16)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.add(egui::Label::new(text).wrap());
+                    beside(ui, 90.0, |ui| {
+                        ui.label(text);
+                    });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         close = ui.small_button("Dismiss").clicked();
                     });
@@ -1158,17 +1218,31 @@ impl App {
         }
     }
 
-    fn apply_theme(&self, ctx: &egui::Context) {
+    fn apply_theme(&mut self, ctx: &egui::Context) {
         let choice = match self.options.theme.as_deref() {
             Some("dark") => Theme::Dark,
             Some("light") => Theme::Light,
+            Some("oled") => Theme::Oled,
             _ => self.settings.theme,
         };
-        if set_accent(self.settings.accent) {
+        // Windows' own accent colour is looked at again every couple of seconds.
+        let mut accent = self.settings.accent;
+        if self.settings.follow_windows_accent {
+            let stale = self.windows_accent_read.is_none_or(|at| at.elapsed().as_secs() >= 2);
+            if stale {
+                self.windows_accent = system::windows_accent();
+                self.windows_accent_read = Some(std::time::Instant::now());
+            }
+            accent = self.windows_accent.unwrap_or(accent);
+            ctx.request_repaint_after(std::time::Duration::from_secs(2));
+        }
+        let mut changed = set_oled(choice == Theme::Oled);
+        changed |= set_accent(accent);
+        if changed {
             apply_style(ctx);
         }
         ctx.set_theme(match choice {
-            Theme::Dark => egui::ThemePreference::Dark,
+            Theme::Dark | Theme::Oled => egui::ThemePreference::Dark,
             Theme::Light => egui::ThemePreference::Light,
             Theme::System => egui::ThemePreference::System,
         });

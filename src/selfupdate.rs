@@ -127,6 +127,15 @@ pub fn check() -> Option<Update> {
     found
 }
 
+/// The Settings button: asks GitHub right now, ignoring the 5 minute wait, and says if it couldn't.
+pub fn check_now() -> Result<Option<Update>, String> {
+    let found = find_release(CURRENT)?;
+    if let Ok(mut last) = LAST_CHECK.lock() {
+        *last = Some((Instant::now(), found.clone()));
+    }
+    Ok(found)
+}
+
 fn checksum_bytes(text: &str) -> Option<Vec<u8>> {
     (0..text.len())
         .step_by(2)

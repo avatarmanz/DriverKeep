@@ -87,14 +87,40 @@ const LIGHT: Pal = Pal {
     faint: Color32::from_rgb(0xB5, 0xB8, 0xC4),
 };
 
+/// Dark with true black, so an OLED screen can switch those pixels off.
+const OLED: Pal = Pal {
+    bg: Color32::from_rgb(0x00, 0x00, 0x00),
+    rail: Color32::from_rgb(0x00, 0x00, 0x00),
+    card: Color32::from_rgb(0x0F, 0x0F, 0x11),
+    field: Color32::from_rgb(0x08, 0x08, 0x09),
+    line: Color32::from_rgb(0x26, 0x26, 0x2B),
+    text: Color32::from_rgb(0xF2, 0xF2, 0xF4),
+    soft: Color32::from_rgb(0xA0, 0xA2, 0xAC),
+    hover: Color32::from_rgb(0x1A, 0x1A, 0x1D),
+    chosen: Color32::from_rgb(0x24, 0x24, 0x28),
+    faint: Color32::from_rgb(0x4A, 0x4B, 0x52),
+};
+
 static IS_DARK: AtomicBool = AtomicBool::new(true);
+static IS_OLED: AtomicBool = AtomicBool::new(false);
 
 pub fn set_dark(dark: bool) {
     IS_DARK.store(dark, Ordering::Relaxed);
 }
 
+/// Gives true when the choice changed, so the colours that were set up once can be redone.
+pub fn set_oled(oled: bool) -> bool {
+    IS_OLED.swap(oled, Ordering::Relaxed) != oled
+}
+
 pub fn pal() -> Pal {
-    if IS_DARK.load(Ordering::Relaxed) { DARK } else { LIGHT }
+    if !IS_DARK.load(Ordering::Relaxed) {
+        LIGHT
+    } else if IS_OLED.load(Ordering::Relaxed) {
+        OLED
+    } else {
+        DARK
+    }
 }
 
 pub const ICON_FONT: &str = "icons";
@@ -265,15 +291,10 @@ pub fn install_look(ctx: &egui::Context) {
     apply_style(ctx);
 }
 
-/// The app's icon as a picture, so the window shows the same one as the taskbar.
-pub fn logo_image() -> egui::ColorImage {
-    let icon = window_icon();
-    egui::ColorImage::from_rgba_unmultiplied([icon.width as usize, icon.height as usize], &icon.rgba)
-}
-
 /// Colours and spacing for both themes. Run again when the accent colour changes.
 pub fn apply_style(ctx: &egui::Context) {
-    for (theme, colors) in [(egui::Theme::Dark, DARK), (egui::Theme::Light, LIGHT)] {
+    let dark = if IS_OLED.load(Ordering::Relaxed) { OLED } else { DARK };
+    for (theme, colors) in [(egui::Theme::Dark, dark), (egui::Theme::Light, LIGHT)] {
         ctx.style_mut_of(theme, |style| {
             let v = &mut style.visuals;
             v.panel_fill = colors.bg;
@@ -397,9 +418,30 @@ pub fn toggle(ui: &mut egui::Ui, on: &mut bool) -> bool {
     changed
 }
 
+/// Text that sits to the left of buttons: it keeps `reserve` points free on the right and wraps
+/// onto more lines instead of running underneath them.
+pub fn beside(ui: &mut egui::Ui, reserve: f32, content: impl FnOnce(&mut egui::Ui)) {
+    ui.vertical(|ui| {
+        ui.set_max_width((ui.available_width() - reserve).max(120.0));
+        content(ui);
+    });
+}
+
 /// One line on the Settings page: icon, words, and its control on the right.
 pub fn setting(
     ui: &mut egui::Ui,
+    glyph: &str,
+    title: &str,
+    detail: &str,
+    control: impl FnOnce(&mut egui::Ui),
+) {
+    setting_with(ui, 120.0, glyph, title, detail, control);
+}
+
+/// Like `setting`, for a control wider than a switch: `reserve` is the room it needs.
+pub fn setting_with(
+    ui: &mut egui::Ui,
+    reserve: f32,
     glyph: &str,
     title: &str,
     detail: &str,
@@ -410,7 +452,7 @@ pub fn setting(
         ui.horizontal(|ui| {
             ui.label(icon(glyph, 17.0, pal().soft));
             ui.add_space(6.0);
-            ui.vertical(|ui| {
+            beside(ui, reserve + 30.0, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.label(RichText::new(title).size(14.0));
                 ui.label(small(detail));

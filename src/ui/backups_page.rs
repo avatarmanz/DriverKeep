@@ -3,12 +3,22 @@
 use super::look::*;
 use super::{App, Ask, Busy};
 use crate::backup::{self, BackupEntry, BackupFile, RestoreState};
-use crate::devices::{self, Device};
+use crate::devices::Device;
 use crate::history::Record;
 use crate::system;
-use egui::{Align, Layout, RichText};
-use std::collections::BTreeMap;
+use chrono::{Datelike, NaiveDate};
+use egui::{Align, Align2, FontId, Layout, RichText, Sense, Stroke, Vec2};
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+
+/// Shown on a change that has no saved backup to go back to.
+const NOT_RESTORABLE: &str = "Cannot be restored";
+
+/// The first day of the month a number of months away.
+fn shift_month(first: NaiveDate, by: i32) -> NaiveDate {
+    let total = first.year() * 12 + first.month0() as i32 + by;
+    NaiveDate::from_ymd_opt(total.div_euclid(12), (total.rem_euclid(12) + 1) as u32, 1).unwrap_or(first)
+}
 
 impl App {
     pub(super) fn backups_page(&mut self, ui: &mut egui::Ui) {
@@ -128,42 +138,173 @@ impl App {
         ui.add_space(8.0);
     }
 
+    /// A month calendar of everything DriverKeep changed. Picking a day lists what happened
+    /// that day, with Put Back wherever a backup was saved first.
     fn recent_changes(&mut self, ui: &mut egui::Ui) {
         if self.history.is_empty() {
             return;
         }
-        heading(ui, "Recent driver changes");
+        heading(ui, "Changes");
         ui.add_space(2.0);
-        let mut undo = None;
-        let mut days: BTreeMap<String, Vec<Record>> = BTreeMap::new();
-        for record in self.history.iter().take(30) {
-            days.entry(devices::short_date(record.when)).or_default().push(record.clone());
+        let today = chrono::Local::now().date_naive();
+        let mut counts: HashMap<NaiveDate, usize> = HashMap::new();
+        for record in &self.history {
+            *counts.entry(super::day_of(record.when)).or_default() += 1;
         }
-        for (day, records) in days.iter().rev() {
-            card().show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(small(day.clone()));
-                for record in records {
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 1.0;
-                            ui.label(RichText::new(record.device.clone()).size(13.5));
-                            let tag = if record.automatic { "automatic, " } else { "" };
-                            let from = if record.from_version.is_empty() { "none" } else { &record.from_version };
-                            ui.label(small(format!("{from}  →  {}   ({tag}{})", record.to_version, record.source)));
-                        });
-                        if let Some(path) = &record.backup {
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if secondary(ui, "Put Back", self.busy == Busy::Idle) {
-                                    undo = Some((PathBuf::from(path), record.instance_id.clone()));
-                                }
-                            });
-                        }
-                    });
+
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                if secondary(ui, "‹", true) {
+                    self.calendar_month = shift_month(self.calendar_month, -1);
                 }
+                ui.label(RichText::new(self.calendar_month.format("%B %Y").to_string()).font(bold(15.0)));
+                if secondary(ui, "›", true) {
+                    self.calendar_month = shift_month(self.calendar_month, 1);
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if secondary(ui, "Today", true) {
+                        self.calendar_month = super::month_of(today);
+                        self.selected_day = Some(today);
+                    }
+                });
             });
             ui.add_space(6.0);
-        }
+
+            let cell_w = (ui.available_width() / 7.0).floor();
+            let p = pal();
+            ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(cell_w, 20.0), Sense::hover());
+                    ui.painter().text(rect.center(), Align2::CENTER_CENTER, name, FontId::proportional(12.0), p.soft);
+                }
+            });
+
+            let first = self.calendar_month;
+            let lead = first.weekday().num_days_from_sunday() as usize;
+            let days_in = (shift_month(first, 1) - first).num_days() as usize;
+            let weeks = (lead + days_in).div_ceil(7);
+            for week in 0..weeks {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for column in 0..7 {
+                        let slot = week * 7 + column;
+                        let (rect, response) = ui.allocate_exact_size(Vec2::new(cell_w, 48.0), Sense::click());
+                        if slot < lead || slot >= lead + days_in {
+                            continue;
+                        }
+                        let day = first + chrono::Days::new((slot - lead) as u64);
+                        let changes = counts.get(&day).copied().unwrap_or(0);
+                        let picked = self.selected_day == Some(day);
+                        let inner = rect.shrink(2.0);
+                        let fill = if picked {
+                            teal().gamma_multiply(0.28)
+                        } else if response.hovered() {
+                            p.hover
+                        } else if changes > 0 {
+                            p.chosen
+                        } else {
+                            p.field
+                        };
+                        let painter = ui.painter();
+                        painter.rect_filled(inner, 8.0, fill);
+                        if picked {
+                            painter.rect_stroke(inner, 8.0, Stroke::new(1.5, teal()), egui::StrokeKind::Inside);
+                        } else if day == today {
+                            painter.rect_stroke(inner, 8.0, Stroke::new(1.0, p.soft), egui::StrokeKind::Inside);
+                        }
+                        let number_font = if changes > 0 { bold(14.0) } else { FontId::proportional(14.0) };
+                        let number_color = if changes > 0 || picked { p.text } else { p.soft };
+                        painter.text(
+                            inner.left_top() + Vec2::new(9.0, 5.0),
+                            Align2::LEFT_TOP,
+                            day.day().to_string(),
+                            number_font,
+                            number_color,
+                        );
+                        if changes > 0 {
+                            let text = format!("{changes} change{}", plural(changes));
+                            painter.circle_filled(inner.left_bottom() + Vec2::new(13.0, -10.0), 3.5, teal());
+                            painter.text(
+                                inner.left_bottom() + Vec2::new(21.0, -10.0),
+                                Align2::LEFT_CENTER,
+                                text,
+                                FontId::proportional(11.5),
+                                p.soft,
+                            );
+                        }
+                        if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            self.selected_day = if picked { None } else { Some(day) };
+                        }
+                    }
+                });
+            }
+        });
+        ui.add_space(8.0);
+
+        let Some(day) = self.selected_day else {
+            soft(ui, "Pick a day to see what changed and put things back.");
+            ui.add_space(8.0);
+            return;
+        };
+        let records: Vec<Record> =
+            self.history.iter().filter(|r| super::day_of(r.when) == day).cloned().collect();
+        let mut undo = None;
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(day.format("%A, %B %-d, %Y").to_string()).font(bold(15.0)));
+                if !records.is_empty() {
+                    pill(ui, &format!("{} change{}", records.len(), plural(records.len())), BLUE);
+                }
+            });
+            if records.is_empty() {
+                ui.add_space(4.0);
+                ui.label(small("Nothing was changed on this day."));
+            }
+            for record in &records {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    // Room is kept on the right for the button or note, so a long name is cut short
+                    // instead of running underneath it.
+                    let right_side = if record.backup.is_some() {
+                        110.0
+                    } else {
+                        let note = ui.painter().layout_no_wrap(
+                            NOT_RESTORABLE.to_string(),
+                            FontId::proportional(12.0),
+                            pal().soft,
+                        );
+                        note.size().x + 28.0
+                    };
+                    beside(ui, right_side, |ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.label(RichText::new(record.device.clone()).size(13.5));
+                        let tag = if record.automatic { "automatic, " } else { "" };
+                        let from = if record.from_version.is_empty() { "none" } else { &record.from_version };
+                        let time = chrono::DateTime::from_timestamp(record.when, 0)
+                            .map(|t| t.with_timezone(&chrono::Local).format("%-I:%M %p").to_string())
+                            .unwrap_or_default();
+                        ui.label(small(format!(
+                            "{from}  →  {}   ({tag}{})   {time}",
+                            record.to_version, record.source
+                        )));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if let Some(path) = &record.backup {
+                            if secondary(ui, "Put Back", self.busy == Busy::Idle) {
+                                undo = Some((PathBuf::from(path), record.instance_id.clone()));
+                            }
+                        } else {
+                            ui.label(small(NOT_RESTORABLE));
+                        }
+                    });
+                });
+            }
+        });
+        ui.add_space(10.0);
         if let Some((path, id)) = undo {
             match backup::read_info(&path) {
                 Ok(info) => {
@@ -175,7 +316,6 @@ impl App {
                 }
             }
         }
-        ui.add_space(6.0);
     }
 
     fn backup_list(&mut self, ui: &mut egui::Ui) {
@@ -195,9 +335,9 @@ impl App {
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
+                    beside(ui, 190.0, |ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.label(RichText::new(file.info.created.clone()).size(14.0));
                             if file.info.automatic {
                                 pill(ui, "Automatic", BLUE);

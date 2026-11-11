@@ -16,7 +16,7 @@ impl App {
             let title = if name.is_empty() { "System".to_string() } else { name };
             ui.label(RichText::new(title).font(bold(20.0)));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if secondary(ui, "Save asâ€¦", !self.devices.is_empty()) {
+                if secondary(ui, "Save as…", !self.devices.is_empty()) {
                     self.save_list();
                 }
             });
@@ -27,7 +27,7 @@ impl App {
             let sections = self.system.as_ref().map(|s| s.sections.clone()).unwrap_or_default();
             let sections: Vec<_> = sections.into_iter().filter(|s| !s.facts.is_empty()).collect();
             if sections.is_empty() {
-                soft(ui, "Reading your systemâ€¦");
+                soft(ui, "Reading your system…");
             }
             // Two balanced columns of cards.
             let mut sides: [Vec<&sysinfo::Section>; 2] = [Vec::new(), Vec::new()];
@@ -109,7 +109,7 @@ impl App {
             }
         }
         if groups.is_empty() {
-            soft(ui, if self.devices.is_empty() { "Reading your hardwareâ€¦" } else { "Nothing matches." });
+            soft(ui, if self.devices.is_empty() { "Reading your hardware…" } else { "Nothing matches." });
         }
         let p = pal();
         let mut clicked = None;

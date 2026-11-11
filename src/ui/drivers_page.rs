@@ -50,10 +50,10 @@ fn row_detail(row: &Row, list: &[&Device]) -> String {
                 .find_map(|d| d.driver.as_ref())
                 .map(|d| d.version.clone())
                 .unwrap_or_else(|| "none".into());
-            format!("{current}  â†’  {target}   {}{size}", update.source.label())
+            format!("{current}  →  {target}   {}{size}", update.source.label())
         }
         Kind::Windows => format!("{}{size}", update.source.label()),
-        Kind::Software => format!("{}  â†’  {target}   {}", update.current, update.source.label()),
+        Kind::Software => format!("{}  →  {target}   {}", update.current, update.source.label()),
     }
 }
 
@@ -82,9 +82,10 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
         ui.horizontal(|ui| {
             ui.add_enabled(!installing, egui::Checkbox::without_text(&mut row.selected));
             text_left = ui.cursor().left();
-            ui.vertical(|ui| {
+            // The status pill ("Downloading 100%") plus the ··· menu is the widest thing on the right.
+            beside(ui, 220.0, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(row_name(row, &list)).size(14.0));
                     if list.len() > 1 {
                         pill(ui, &format!("{} devices", list.len()), BLUE);
@@ -96,7 +97,7 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                 ui.label(small(row_detail(row, &list)));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.menu_button("Â·Â·Â·", |ui| {
+                ui.menu_button("···", |ui| {
                     let retry = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
                     if retry && ui.add_enabled(!installing, egui::Button::new("Try again")).clicked() {
                         clicks.install = Some(vec![row.update.id.clone()]);
@@ -203,7 +204,9 @@ impl App {
             ui.set_width(ui.available_width());
             ui.label(RichText::new("DriverKeep update").font(bold(14.0)));
             ui.horizontal(|ui| {
-                ui.add(egui::Label::new(text).wrap());
+                beside(ui, 200.0, |ui| {
+                    ui.label(text);
+                });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| match pill_state {
                     Some((label, color)) if !waiting => pill(ui, &label, color),
                     _ => {
@@ -293,7 +296,7 @@ impl App {
                     self.stop_scan();
                 }
                 ui.add_space(14.0);
-                ui.label(RichText::new("Scanningâ€¦").font(bold(17.0)));
+                ui.label(RichText::new("Scanning…").font(bold(17.0)));
                 soft(ui, self.status.clone());
             });
             ui.ctx().request_repaint();

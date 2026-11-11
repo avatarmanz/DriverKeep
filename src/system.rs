@@ -377,6 +377,13 @@ pub fn end_restore_point(sequence: i64) {
     }
 }
 
+/// The accent colour chosen in Windows' own Settings, when it can be read.
+pub fn windows_accent() -> Option<[u8; 3]> {
+    // Stored as 0xAABBGGRR.
+    let value = user_registry_number("Software\\Microsoft\\Windows\\DWM", "AccentColor")?;
+    Some([(value & 0xFF) as u8, ((value >> 8) & 0xFF) as u8, ((value >> 16) & 0xFF) as u8])
+}
+
 /// A number under the current user's registry key, such as an Internet Settings switch.
 pub fn user_registry_number(key_path: &str, value: &str) -> Option<u32> {
     let mut key = HKEY::default();
@@ -459,6 +466,8 @@ pub enum Theme {
     System,
     Light,
     Dark,
+    /// Dark with true black, for OLED screens.
+    Oled,
 }
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -493,6 +502,7 @@ pub fn restore_point_day() -> String {
 pub struct Settings {
     pub theme: Theme,
     pub accent: [u8; 3],
+    pub follow_windows_accent: bool,
     pub run_on_startup: bool,
     pub start_hidden: bool,
     pub close_choice: CloseChoice,
@@ -543,6 +553,7 @@ impl Default for Settings {
         Self {
             theme: Theme::System,
             accent: [0x2A, 0xAE, 0x9B],
+            follow_windows_accent: false,
             run_on_startup: false,
             start_hidden: true,
             close_choice: CloseChoice::Ask,

@@ -110,7 +110,7 @@ impl App {
         let ignored = self.settings.ignored.len();
         if ignored > 0 {
             let mut clear = false;
-            setting(ui, ICON_RESET, "Ignored updates", &format!("{ignored} hidden from your list."), |ui| {
+            setting_with(ui, 150.0, ICON_RESET, "Ignored updates", &format!("{ignored} hidden from your list."), |ui| {
                 clear = secondary(ui, "Show Them Again", true);
             });
             if clear {
@@ -133,54 +133,90 @@ impl App {
     fn customization_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool) {
         let s = &mut self.settings;
         group_title(ui, "Theme");
-        setting(ui, ICON_THEME, "Light or dark", "Pick one, or match Windows.", |ui| {
-            // This row is laid out right to left, so the list is backwards to read System, Light, Dark.
-            for (theme, label) in [(Theme::Dark, "Dark"), (Theme::Light, "Light"), (Theme::System, "System")] {
+        setting_with(ui, 370.0, ICON_THEME, "Light or dark", "OLED uses true black, which saves power on OLED screens.", |ui| {
+            // This row is laid out right to left, so the list is backwards to read System, Light, Dark, OLED.
+            for (theme, label) in
+                [(Theme::Oled, "OLED"), (Theme::Dark, "Dark"), (Theme::Light, "Light"), (Theme::System, "System")]
+            {
                 *changed |= ui.selectable_value(&mut s.theme, theme, label).changed();
             }
         });
 
         group_title(ui, "Accent color");
+        setting(ui, ICON_THEME, "Follow Windows color", "Uses the accent color from your Windows settings, and keeps up if it changes.", |ui| {
+            *changed |= toggle(ui, &mut s.follow_windows_accent);
+        });
+        let follow = s.follow_windows_accent;
+        ui.add_space(6.0);
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(small("Used for buttons, progress, switches and highlights."));
+            let note = if follow {
+                "Turn off Follow Windows color to choose your own."
+            } else {
+                "Used for buttons, progress, switches and highlights."
+            };
+            ui.label(small(note));
             ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                for (name, rgb) in ACCENTS {
-                    let (rect, response) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
-                    ui.painter().circle_filled(rect.center(), 13.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
-                    if s.accent == rgb {
-                        ui.painter().circle_stroke(rect.center(), 15.5, Stroke::new(2.0, pal().text));
+            ui.add_enabled_ui(!follow, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    for (name, rgb) in ACCENTS {
+                        let (rect, response) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+                        ui.painter().circle_filled(rect.center(), 13.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+                        if s.accent == rgb {
+                            ui.painter().circle_stroke(rect.center(), 15.5, Stroke::new(2.0, pal().text));
+                        }
+                        if response.on_hover_text(name).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            s.accent = rgb;
+                            *changed = true;
+                        }
                     }
-                    if response.on_hover_text(name).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        s.accent = rgb;
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Your own color");
+                    *changed |= ui.color_edit_button_srgb(&mut s.accent).changed();
+                    if secondary(ui, "Back to teal", s.accent != DEFAULT_ACCENT) {
+                        s.accent = DEFAULT_ACCENT;
                         *changed = true;
                     }
-                }
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label("Your own color");
-                *changed |= ui.color_edit_button_srgb(&mut s.accent).changed();
-                if secondary(ui, "Back to teal", s.accent != DEFAULT_ACCENT) {
-                    s.accent = DEFAULT_ACCENT;
-                    *changed = true;
-                }
+                });
             });
         });
 
         group_title(ui, "Preview");
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                primary(ui, "Update Everything", true);
-                secondary(ui, "Scan Again", true);
-                let mut on = true;
-                toggle(ui, &mut on);
-            });
+            ui.label(small("This is how the app looks with your choices."));
             ui.add_space(8.0);
-            progress_bar(ui, 60);
+            // The sample sits in its own outlined box so it reads as an example, not as settings.
+            egui::Frame::new()
+                .fill(pal().bg)
+                .stroke(Stroke::new(1.0, pal().line))
+                .corner_radius(egui::CornerRadius::same(10))
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new("Update your computer").font(bold(15.0)));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        primary(ui, "Update Everything", true);
+                        secondary(ui, "Scan Again", true);
+                        ui.add_space(6.0);
+                        let mut on = true;
+                        toggle(ui, &mut on);
+                        ui.label(small("A switch that's on"));
+                    });
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Voice Clarity");
+                        pill(ui, "Installing 60%", SKY);
+                    });
+                    ui.add_space(4.0);
+                    progress_bar(ui, 60);
+                    ui.add_space(4.0);
+                    ui.label(small("The bar fills as an update downloads or installs. This one is 60% done."));
+                });
         });
     }
 
@@ -209,8 +245,8 @@ impl App {
         let mut get_chocolatey = false;
         let mut open_store = false;
         let free = !self.tools_installing;
-        let install_text = if free { "Install" } else { "Installingâ€¦" };
-        setting(ui, ICON_SETTINGS, "Windows Package Manager", "Finds updates for the programs already on your PC.", |ui| {
+        let install_text = if free { "Install" } else { "Installing…" };
+        setting_with(ui, 280.0, ICON_SETTINGS, "Windows Package Manager", "Finds updates for the programs already on your PC.", |ui| {
             if winget_ready {
                 *changed |= toggle(ui, &mut s.use_winget);
             } else {
@@ -218,7 +254,7 @@ impl App {
                 open_store = secondary(ui, "Microsoft Store", true);
             }
         });
-        setting(ui, ICON_SETTINGS, "Chocolatey", "Updates programs that Chocolatey installed.", |ui| {
+        setting_with(ui, 150.0, ICON_SETTINGS, "Chocolatey", "Updates programs that Chocolatey installed.", |ui| {
             if choco_ready {
                 *changed |= toggle(ui, &mut s.use_chocolatey);
             } else {
@@ -238,7 +274,7 @@ impl App {
         let s = &mut self.settings;
         group_title(ui, "In the background");
         let detail = "Runs in the tray helper, or the next time you open the app.";
-        setting(ui, ICON_CLOCK, "Scan on a schedule", detail, |ui| {
+        setting_with(ui, 440.0, ICON_CLOCK, "Scan on a schedule", detail, |ui| {
             let text = match s.scan_frequency {
                 Frequency::Never => "Off",
                 Frequency::Daily => "Every day",
@@ -315,7 +351,7 @@ impl App {
         if !s.silent_install {
             return;
         }
-        setting(ui, ICON_CLOCK, "Only during these hours", "Set both the same to allow any time.", |ui| {
+        setting_with(ui, 260.0, ICON_CLOCK, "Only during these hours", "Set both the same to allow any time.", |ui| {
             *changed |= hour_picker(ui, "to", &mut s.install_to);
             ui.label(small("to"));
             *changed |= hour_picker(ui, "from", &mut s.install_from);
@@ -360,7 +396,7 @@ impl App {
         let folder = s.backup_folder.display().to_string();
         let mut pick_folder = false;
         let mut open_folder = false;
-        setting(ui, ICON_FOLDER, "Backup folder", &folder, |ui| {
+        setting_with(ui, 190.0, ICON_FOLDER, "Backup folder", &folder, |ui| {
             pick_folder = secondary(ui, "Change", true);
             open_folder = secondary(ui, "Open", true);
         });
@@ -381,6 +417,14 @@ impl App {
         group_title(ui, "DriverKeep");
         let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
         setting(ui, ICON_ABOUT, system::APP_NAME, &version, |_| {});
+        let mut check = false;
+        let checking = self.checking_app;
+        setting_with(ui, 190.0, ICON_RESET, "Check for updates", "Looks on GitHub for a newer DriverKeep right now.", |ui| {
+            check = secondary(ui, if checking { "Checking…" } else { "Check for Updates" }, !checking);
+        });
+        if check {
+            self.check_app_update(ui.ctx());
+        }
         let s = &mut self.settings;
         setting(ui, ICON_DRIVERS, "Update DriverKeep automatically", "Each scan checks GitHub and installs any later version by itself.", |ui| {
             *changed |= toggle(ui, &mut s.auto_update_app);
