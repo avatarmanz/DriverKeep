@@ -1089,7 +1089,7 @@ impl App {
             ui.add_space(8.0);
         }
         if let Some((text, bad)) = self.message.clone() {
-            let color = if bad { CRITICAL } else { SUCCESS };
+            let color = if bad { CRITICAL } else { teal() };
             let mut close = false;
             card().fill(color.gamma_multiply(0.16)).show(ui, |ui| {
                 ui.set_width(ui.available_width());

@@ -211,7 +211,7 @@ impl App {
         let text = format!("DriverKeep {} is available (you have {}).", row.update.version, row.update.current);
         let id = row.update.id.clone();
         let pill_state = state_pill(row);
-        card().fill(BLUE.gamma_multiply(0.14 + 0.16 * pulse)).show(ui, |ui| {
+        card().fill(teal().gamma_multiply(0.14 + 0.16 * pulse)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(RichText::new("DriverKeep update").font(bold(14.0)));
             ui.horizontal(|ui| {

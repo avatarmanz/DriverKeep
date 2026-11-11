@@ -490,8 +490,8 @@ impl App {
             // Laid out right to left: the result sits at the far right, with the button to its left.
             if let Some((text, kind)) = &result {
                 let color = match kind {
-                    AppCheck::Latest => SUCCESS,
-                    AppCheck::Available => SKY,
+                    AppCheck::Latest => teal(),
+                    AppCheck::Available => teal(),
                     AppCheck::Failed => CRITICAL,
                 };
                 status_bar(ui, text, color);
