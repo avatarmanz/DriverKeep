@@ -563,7 +563,13 @@ fn install(
                 note(ItemState::Downloading);
                 // Saved first: setup closes this copy before the loop can finish.
                 history::add(std::mem::take(&mut records));
-                crate::selfupdate::install(update, plan.automatic)
+                crate::selfupdate::install(update, plan.automatic, || {
+                    note(ItemState::Installing);
+                    status(
+                        99,
+                        "Installing the new version. Windows may ask for permission, then DriverKeep closes and reopens by itself.".into(),
+                    );
+                })
             }
         };
         match result {

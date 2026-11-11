@@ -202,11 +202,13 @@ pub fn check_download(root: &Path) -> String {
 
 /// Starts the checked setup program. Setup closes this copy, replaces it, then brings back
 /// whichever part was running.
-pub fn install(update: &Update, from_helper: bool) -> Result<bool, String> {
+pub fn install(update: &Update, from_helper: bool, about_to_close: impl Fn()) -> Result<bool, String> {
     let root = crate::system::data_dir()
         .ok_or("DriverKeep's folder couldn't be found.")?
         .join("updates");
     let setup = fetch_into(update, &root)?;
+    // The download is finished and checked: tell the person before setup closes this window.
+    about_to_close();
     let bring_back = if from_helper { "--helper" } else { "--reopen" };
     Command::new(&setup)
         .args(["--silent", bring_back])

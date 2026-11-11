@@ -24,6 +24,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+/// What the Check for Updates button found out.
+#[derive(Clone, Copy, PartialEq)]
+enum AppCheck {
+    Latest,
+    Available,
+    Failed,
+}
+
 /// The calendar day, in this computer's time zone, that a saved time falls on.
 fn day_of(unix: i64) -> chrono::NaiveDate {
     use chrono::TimeZone;
@@ -158,6 +166,11 @@ pub struct App {
     windows_accent: Option<[u8; 3]>,
     windows_accent_read: Option<std::time::Instant>,
     checking_app: bool,
+    app_check: Option<(String, AppCheck)>,
+    preview_percent: f32,
+    preview_running: bool,
+    preview_on: bool,
+    bring_forward: bool,
     calendar_month: chrono::NaiveDate,
     selected_day: Option<chrono::NaiveDate>,
     spin: f32,
@@ -234,6 +247,11 @@ impl App {
             windows_accent: None,
             windows_accent_read: None,
             checking_app: false,
+            app_check: None,
+            preview_percent: 60.0,
+            preview_running: false,
+            preview_on: true,
+            bring_forward: false,
             calendar_month: month_of(latest_change_day.unwrap_or_else(|| chrono::Local::now().date_naive())),
             selected_day: latest_change_day,
             spin: 0.0,
@@ -242,6 +260,18 @@ impl App {
             shot_done: Arc::new(AtomicBool::new(false)),
             options,
         };
+        // After a self-update the window always comes back to the front, even if it was in the tray.
+        if app.options.screenshot.is_none() {
+            if let Some(version) = system::take_update_marker() {
+                let text = if version.is_empty() {
+                    "DriverKeep was updated.".to_string()
+                } else {
+                    format!("DriverKeep was updated to version {version}.")
+                };
+                app.message = Some((text, false));
+                app.bring_forward = true;
+            }
+        }
         app.refresh_devices(&cc.egui_ctx);
         app.refresh_system(&cc.egui_ctx);
         app.refresh_tools(&cc.egui_ctx);
@@ -271,6 +301,7 @@ impl App {
             return;
         }
         self.checking_app = true;
+        self.app_check = None;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         std::thread::spawn(move || {
@@ -457,21 +488,21 @@ impl App {
             match work {
                 Work::AppUpdate(result) => {
                     self.checking_app = false;
-                    self.message = Some(match result {
+                    // Shown beside the Check for Updates button in Settings > About.
+                    self.app_check = Some(match result {
                         Ok(Some(update)) => {
-                            let text = format!(
-                                "DriverKeep {} is available. It's at the top of the Updates page.",
-                                update.version
-                            );
+                            let text = format!("Version {} is available", update.version);
                             self.raw.retain(|u| u.source != Source::GitHub);
                             self.raw.push(update);
                             self.rebuild_rows();
-                            self.page = Page::Drivers;
                             self.flash_app_update = true;
-                            (text, false)
+                            (text, AppCheck::Available)
                         }
-                        Ok(None) => (format!("You have the latest version ({}).", crate::selfupdate::CURRENT), false),
-                        Err(error) => (format!("Couldn't check for a new version: {error}"), true),
+                        Ok(None) => (
+                            format!("You have the latest version ({})", crate::selfupdate::CURRENT),
+                            AppCheck::Latest,
+                        ),
+                        Err(_) => ("Couldn't check right now".to_string(), AppCheck::Failed),
                     });
                 }
                 Work::Devices(list) => {
@@ -810,7 +841,8 @@ impl App {
         let chosen = self.page == page;
         let p = pal();
         if chosen {
-            ui.painter().rect_filled(inner, 10.0, p.chosen);
+            // The page you're on is the same solid accent color as the buttons.
+            ui.painter().rect_filled(inner, 10.0, teal());
         } else if response.hovered() {
             ui.painter().rect_filled(inner, 10.0, p.hover);
         }
@@ -819,14 +851,14 @@ impl App {
             Align2::CENTER_CENTER,
             glyph,
             icon_font(19.0),
-            if chosen { teal() } else { p.soft },
+            if chosen { Color32::WHITE } else { p.soft },
         );
         ui.painter().text(
             inner.center() + Vec2::new(0.0, 17.0),
             Align2::CENTER_CENTER,
             label,
             FontId::proportional(11.5),
-            if chosen { p.text } else { p.soft },
+            if chosen { Color32::WHITE } else { p.soft },
         );
         if count > 0 {
             let center = inner.center() + Vec2::new(15.0, -17.0);
@@ -1257,6 +1289,10 @@ impl eframe::App for App {
         self.handle_close(&ctx);
         self.receive(&ctx);
         self.screenshot_step(&ctx);
+        if std::mem::take(&mut self.bring_forward) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
         if std::mem::take(&mut self.flash_app_update) && self.options.screenshot.is_none() {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Critical,

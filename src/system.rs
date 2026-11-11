@@ -609,6 +609,15 @@ pub fn data_dir() -> Option<PathBuf> {
     Some(dirs::data_local_dir()?.join(APP_NAME))
 }
 
+/// Setup leaves a note here after replacing DriverKeep with a newer version. Reading it removes it,
+/// so the first window opened afterwards knows to come to the front and say it was updated.
+pub fn take_update_marker() -> Option<String> {
+    let file = data_dir()?.join("just-updated.txt");
+    let text = std::fs::read_to_string(&file).ok()?;
+    let _ = std::fs::remove_file(&file);
+    Some(text.trim().to_string())
+}
+
 pub fn read_cache<T: DeserializeOwned>(file: &str) -> Option<T> {
     let text = std::fs::read_to_string(data_dir()?.join(file)).ok()?;
     serde_json::from_str(&text).ok()

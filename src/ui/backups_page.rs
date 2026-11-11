@@ -28,7 +28,9 @@ impl App {
             .filter(|d| self.backup_visible(d) && self.backup_picks.contains(&d.instance_id))
             .count();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Backups").font(bold(20.0)));
+            ui.label(RichText::new("Backups:").font(bold(20.0)));
+            let saved = self.backups.len();
+            ui.label(RichText::new(format!("{saved} available")).font(bold(20.0)).color(teal()));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let label = format!("Back Up {count} Driver{}", plural(count));
                 if primary(ui, &label, count > 0 && self.busy == Busy::Idle) {
@@ -200,7 +202,7 @@ impl App {
                         let picked = self.selected_day == Some(day);
                         let inner = rect.shrink(2.0);
                         let fill = if picked {
-                            teal().gamma_multiply(0.28)
+                            teal().gamma_multiply(0.42)
                         } else if response.hovered() {
                             p.hover
                         } else if changes > 0 {
@@ -211,7 +213,7 @@ impl App {
                         let painter = ui.painter();
                         painter.rect_filled(inner, 8.0, fill);
                         if picked {
-                            painter.rect_stroke(inner, 8.0, Stroke::new(1.5, teal()), egui::StrokeKind::Inside);
+                            painter.rect_stroke(inner, 8.0, Stroke::new(2.0, teal()), egui::StrokeKind::Inside);
                         } else if day == today {
                             painter.rect_stroke(inner, 8.0, Stroke::new(1.0, p.soft), egui::StrokeKind::Inside);
                         }

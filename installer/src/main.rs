@@ -306,13 +306,14 @@ fn finish(exe: &Path, silent: bool) {
             open_app(exe);
         }
     }
-    // After a self-update, bring back whichever part was running.
+    // After a self-update the window always comes back to the front, whether it was open or
+    // only the tray helper was running. The window starts the tray helper again by itself.
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--reopen") {
-        open_app(exe);
-    }
     if args.iter().any(|a| a == "--helper") {
         quiet("schtasks", &["/Run", "/TN", HELPER_TASK]);
+    }
+    if args.iter().any(|a| a == "--reopen" || a == "--helper") {
+        open_app(exe);
     }
 }
 
@@ -375,15 +376,34 @@ fn main() {
             return;
         }
     }
-    let status = (!silent).then(|| Status::show("Checking for Microsoft Visual C++..."));
-    let problems = add_missing_runtimes(status.as_ref());
+    // A self-update runs silently, but the person still gets a box saying what's happening, so
+    // DriverKeep closing and coming back doesn't look like a crash.
+    let update_run = args.iter().any(|a| a == "--reopen" || a == "--helper");
+    let first_words = if update_run {
+        format!("Updating DriverKeep to {VERSION}... it will reopen by itself.")
+    } else {
+        "Checking for Microsoft Visual C++...".to_string()
+    };
+    let mut status = (!silent || update_run).then(|| Status::show(&first_words));
+    let problems = if update_run { Vec::new() } else { add_missing_runtimes(status.as_ref()) };
     if let Some(status) = &status {
-        status.say("Installing DriverKeep...");
+        status.say(&if update_run {
+            format!("Installing DriverKeep {VERSION}...")
+        } else {
+            "Installing DriverKeep...".to_string()
+        });
     }
     note("installing DriverKeep");
     let installed = install_files();
     note("files done");
-    drop(status);
+    if update_run && installed.is_ok() {
+        write_update_marker();
+        if let Some(status) = &status {
+            status.say("Updated. Reopening DriverKeep...");
+        }
+    } else {
+        status = None;
+    }
     if !problems.is_empty() && !silent {
         let text = format!(
             "Microsoft Visual C++ couldn't be added: {}.\n\nDriverKeep doesn't need it, but some other programs might.",
@@ -397,4 +417,17 @@ fn main() {
             message(&format!("DriverKeep couldn't be installed.\n\n{error}"), MB_OK | MB_ICONERROR);
         }
     }
+    // Left up a moment so the "Reopening" box can be read before the window appears.
+    if status.is_some() {
+        std::thread::sleep(std::time::Duration::from_millis(1800));
+    }
+    drop(status);
+}
+
+/// Tells the new copy it was just installed over an older one, so it comes to the front.
+fn write_update_marker() {
+    let Ok(base) = std::env::var("LOCALAPPDATA") else { return };
+    let folder = Path::new(&base).join(APP);
+    let _ = std::fs::create_dir_all(&folder);
+    let _ = std::fs::write(folder.join("just-updated.txt"), VERSION);
 }

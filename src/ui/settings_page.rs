@@ -2,7 +2,7 @@
 //! Backup and About.
 
 use super::look::*;
-use super::{App, Ask};
+use super::{App, AppCheck, Ask};
 use crate::system::{self, CloseChoice, Frequency, Settings, Theme};
 use chrono::Datelike;
 use egui::{Color32, RichText, Sense, Stroke, Vec2};
@@ -187,9 +187,8 @@ impl App {
         group_title(ui, "Preview");
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(small("This is how the app looks with your choices."));
-            ui.add_space(8.0);
             // The sample sits in its own outlined box so it reads as an example, not as settings.
+            // Everything in it works, so the colors can be tried out.
             egui::Frame::new()
                 .fill(pal().bg)
                 .stroke(Stroke::new(1.0, pal().line))
@@ -197,48 +196,75 @@ impl App {
                 .inner_margin(egui::Margin::same(14))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new("Update your computer").font(bold(15.0)));
+                    if self.preview_running {
+                        let step = ui.input(|i| i.stable_dt).min(0.1) * 30.0;
+                        self.preview_percent = (self.preview_percent + step).min(100.0);
+                        if self.preview_percent >= 100.0 {
+                            self.preview_running = false;
+                        }
+                        ui.ctx().request_repaint();
+                    }
+                    ui.label(RichText::new("Updates").font(bold(15.0)));
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        primary(ui, "Update Everything", true);
-                        secondary(ui, "Scan Again", true);
+                        if primary(ui, "Update Everything", true) {
+                            if self.preview_percent >= 100.0 {
+                                self.preview_percent = 0.0;
+                            }
+                            self.preview_running = true;
+                        }
+                        if secondary(ui, "Scan Again", true) {
+                            self.preview_running = false;
+                            self.preview_percent = 0.0;
+                        }
                         ui.add_space(6.0);
-                        let mut on = true;
-                        toggle(ui, &mut on);
-                        ui.label(small("A switch that's on"));
+                        toggle(ui, &mut self.preview_on);
+                        ui.label(small(if self.preview_on { "Switch is on" } else { "Switch is off" }));
                     });
                     ui.add_space(12.0);
+                    let percent = self.preview_percent.round() as u32;
                     ui.horizontal(|ui| {
                         ui.label("Voice Clarity");
-                        pill(ui, "Installing 60%", SKY);
+                        let (label, color) = if percent >= 100 {
+                            ("Installed".to_string(), SUCCESS)
+                        } else if self.preview_running || percent > 0 {
+                            (format!("Installing {percent}%"), SKY)
+                        } else {
+                            ("Waiting".to_string(), pal().soft)
+                        };
+                        pill(ui, &label, color);
                     });
-                    ui.add_space(4.0);
-                    progress_bar(ui, 60);
-                    ui.add_space(4.0);
-                    ui.label(small("The bar fills as an update downloads or installs. This one is 60% done."));
+                    ui.add_space(2.0);
+                    if drag_bar(ui, &mut self.preview_percent) {
+                        self.preview_running = false;
+                    }
+                    ui.add_space(2.0);
+                    ui.label(small("The bar fills as an update downloads or installs. Click or drag it, or press Update Everything."));
                 });
         });
     }
 
     fn scanning_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool, startup_changed: &mut bool) {
         let s = &mut self.settings;
-        group_title(ui, "What to check");
-        setting(ui, ICON_DRIVERS, "Drivers", "Looks for newer drivers for your hardware.", |ui| {
+        group_title(ui, "Drivers");
+        setting(ui, ICON_DRIVERS, "Check for new drivers", "Looks for newer drivers for your hardware.", |ui| {
             *changed |= toggle(ui, &mut s.scan_drivers);
         });
-        setting(ui, ICON_SYSTEM, "Windows updates", "Security and system updates from Microsoft.", |ui| {
-            *changed |= toggle(ui, &mut s.scan_windows);
-        });
-        setting(ui, ICON_SCAN, "Optional Windows updates", "Previews Windows doesn't install by itself.", |ui| {
-            *changed |= toggle(ui, &mut s.scan_optional);
-        });
-        setting(ui, ICON_BACKUP, "Installed software", "Newer versions of your other programs.", |ui| {
-            *changed |= toggle(ui, &mut s.scan_software);
-        });
-
-        group_title(ui, "Where to look");
         setting(ui, ICON_GLOBE, "Microsoft Update Catalog", "Finds drivers Windows Update doesn't offer on its own.", |ui| {
             *changed |= toggle(ui, &mut s.use_catalog);
+        });
+
+        group_title(ui, "Windows updates");
+        setting(ui, ICON_SYSTEM, "Check for Windows updates", "Security and system updates from Microsoft.", |ui| {
+            *changed |= toggle(ui, &mut s.scan_windows);
+        });
+        setting(ui, ICON_SCAN, "Include optional updates", "Previews Windows doesn't install by itself.", |ui| {
+            *changed |= toggle(ui, &mut s.scan_optional);
+        });
+
+        group_title(ui, "Third-party software");
+        setting(ui, ICON_BACKUP, "Check installed programs", "Newer versions of your other programs.", |ui| {
+            *changed |= toggle(ui, &mut s.scan_software);
         });
         let (winget_ready, choco_ready) = self.tools.unwrap_or((true, true));
         let mut get_winget = false;
@@ -272,7 +298,7 @@ impl App {
         }
 
         let s = &mut self.settings;
-        group_title(ui, "In the background");
+        group_title(ui, "Scheduling");
         let detail = "Runs in the tray helper, or the next time you open the app.";
         setting_with(ui, 440.0, ICON_CLOCK, "Scan on a schedule", detail, |ui| {
             let text = match s.scan_frequency {
@@ -322,20 +348,7 @@ impl App {
 
     fn installing_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool) {
         let s = &mut self.settings;
-        group_title(ui, "Update Everything");
-        setting(ui, ICON_BELL, "Ask before updating drivers", "Shows a reminder before driver updates start.", |ui| {
-            *changed |= toggle(ui, &mut s.update_all_remind);
-        });
-        setting(ui, ICON_DRIVERS, "Include drivers", "Ticked after each scan.", |ui| {
-            *changed |= toggle(ui, &mut s.pick_drivers);
-        });
-        setting(ui, ICON_SYSTEM, "Include Windows updates", "Ticked after each scan.", |ui| {
-            *changed |= toggle(ui, &mut s.pick_windows);
-        });
-        setting(ui, ICON_BACKUP, "Include software", "Ticked after each scan.", |ui| {
-            *changed |= toggle(ui, &mut s.pick_software);
-        });
-
+        // The switch for silent installs comes first, since the silent options below depend on it.
         group_title(ui, "Silent installs");
         let mut silent = s.silent_install;
         let mut ask = None;
@@ -348,33 +361,61 @@ impl App {
             self.ask = Some(Ask::HelperTask(on));
         }
         let s = &mut self.settings;
-        if !s.silent_install {
-            return;
-        }
-        setting_with(ui, 260.0, ICON_CLOCK, "Only during these hours", "Set both the same to allow any time.", |ui| {
-            *changed |= hour_picker(ui, "to", &mut s.install_to);
-            ui.label(small("to"));
-            *changed |= hour_picker(ui, "from", &mut s.install_from);
-        });
-        setting(ui, ICON_DRIVERS, "Install drivers silently", "From Windows Update.", |ui| {
-            *changed |= toggle(ui, &mut s.silent_drivers);
-        });
-        setting(ui, ICON_GLOBE, "Include Microsoft Catalog drivers", "Off keeps silent drivers to Windows Update only.", |ui| {
-            *changed |= toggle(ui, &mut s.silent_catalog);
-        });
-        setting(ui, ICON_SYSTEM, "Install Windows updates silently", "May need a restart.", |ui| {
-            *changed |= toggle(ui, &mut s.silent_windows);
-        });
-        setting(ui, ICON_BACKUP, "Install software silently", "Programs being updated may close.", |ui| {
-            *changed |= toggle(ui, &mut s.silent_software);
-        });
-        setting(ui, ICON_RESTART, "Restart automatically", "If a driver needs it. You get a 5 minute warning.", |ui| {
-            *changed |= toggle(ui, &mut s.auto_restart);
-        });
-        if s.auto_restart {
-            setting(ui, ICON_CLOCK, "Restart only during those hours", "Otherwise it restarts right after installing.", |ui| {
-                *changed |= toggle(ui, &mut s.restart_only_in_hours);
+        let silent_on = s.silent_install;
+        if silent_on {
+            setting_with(ui, 260.0, ICON_CLOCK, "Only during these hours", "Set both the same to allow any time.", |ui| {
+                *changed |= hour_picker(ui, "to", &mut s.install_to);
+                ui.label(small("to"));
+                *changed |= hour_picker(ui, "from", &mut s.install_from);
             });
+        }
+
+        group_title(ui, "Drivers");
+        setting(ui, ICON_BELL, "Ask before updating drivers", "Shows a reminder before driver updates start.", |ui| {
+            *changed |= toggle(ui, &mut s.update_all_remind);
+        });
+        setting(ui, ICON_DRIVERS, "Include drivers in Update Everything", "Ticked after each scan.", |ui| {
+            *changed |= toggle(ui, &mut s.pick_drivers);
+        });
+        if silent_on {
+            setting(ui, ICON_SILENT, "Install drivers silently", "From Windows Update.", |ui| {
+                *changed |= toggle(ui, &mut s.silent_drivers);
+            });
+            setting(ui, ICON_GLOBE, "Include Microsoft Catalog drivers", "Off keeps silent drivers to Windows Update only.", |ui| {
+                *changed |= toggle(ui, &mut s.silent_catalog);
+            });
+        }
+
+        group_title(ui, "Windows updates");
+        setting(ui, ICON_SYSTEM, "Include Windows updates in Update Everything", "Ticked after each scan.", |ui| {
+            *changed |= toggle(ui, &mut s.pick_windows);
+        });
+        if silent_on {
+            setting(ui, ICON_SILENT, "Install Windows updates silently", "May need a restart.", |ui| {
+                *changed |= toggle(ui, &mut s.silent_windows);
+            });
+        }
+
+        group_title(ui, "Third-party software");
+        setting(ui, ICON_BACKUP, "Include software in Update Everything", "Ticked after each scan.", |ui| {
+            *changed |= toggle(ui, &mut s.pick_software);
+        });
+        if silent_on {
+            setting(ui, ICON_SILENT, "Install software silently", "Programs being updated may close.", |ui| {
+                *changed |= toggle(ui, &mut s.silent_software);
+            });
+        }
+
+        if silent_on {
+            group_title(ui, "Restart options");
+            setting(ui, ICON_RESTART, "Restart automatically", "If a driver needs it. You get a 5 minute warning.", |ui| {
+                *changed |= toggle(ui, &mut s.auto_restart);
+            });
+            if s.auto_restart {
+                setting(ui, ICON_CLOCK, "Restart only during those hours", "Otherwise it restarts right after installing.", |ui| {
+                    *changed |= toggle(ui, &mut s.restart_only_in_hours);
+                });
+            }
         }
     }
 
@@ -384,12 +425,12 @@ impl App {
         setting(ui, ICON_BACKUP, "Back up the current driver", "Saves it so you can put it back.", |ui| {
             *changed |= toggle(ui, &mut s.backup_before_update);
         });
+        setting(ui, ICON_SHIELD, "Create a Windows restore point", "Made once a day before driver updates.", |ui| {
+            *changed |= toggle(ui, &mut s.make_restore_point);
+        });
         let detail = "If a backup fails, the driver installs anyway and can't be put back.";
         setting(ui, ICON_BACKUP, "Install even if a backup can't be made", detail, |ui| {
             *changed |= toggle(ui, &mut s.install_without_backup);
-        });
-        setting(ui, ICON_SHIELD, "Create a Windows restore point", "Made once a day before driver updates.", |ui| {
-            *changed |= toggle(ui, &mut s.make_restore_point);
         });
 
         group_title(ui, "Where backups go");
@@ -415,15 +456,48 @@ impl App {
 
     fn about_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool) {
         group_title(ui, "DriverKeep");
-        let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
-        setting(ui, ICON_ABOUT, system::APP_NAME, &version, |_| {});
+        // Like the other rows, but the version number is in the accent color.
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(icon(ICON_ABOUT, 17.0, pal().soft));
+                ui.add_space(6.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.label(RichText::new(system::APP_NAME).size(14.0));
+                    let mut line = egui::text::LayoutJob::default();
+                    let format = |color| egui::TextFormat::simple(egui::FontId::proportional(12.0), color);
+                    line.append("Version ", 0.0, format(pal().soft));
+                    line.append(env!("CARGO_PKG_VERSION"), 0.0, format(teal()));
+                    ui.label(line);
+                });
+            });
+        });
+        ui.add_space(4.0);
         let mut check = false;
+        let mut view = false;
         let checking = self.checking_app;
-        setting_with(ui, 190.0, ICON_RESET, "Check for updates", "Looks on GitHub for a newer DriverKeep right now.", |ui| {
+        let result = self.app_check.clone();
+        setting_with(ui, 470.0, ICON_RESET, "Check for updates", "Looks for a newer DriverKeep on GitHub.", |ui| {
+            // Laid out right to left: the result sits at the far right, with the button to its left.
+            if let Some((text, kind)) = &result {
+                let color = match kind {
+                    AppCheck::Latest => SUCCESS,
+                    AppCheck::Available => SKY,
+                    AppCheck::Failed => CRITICAL,
+                };
+                status_bar(ui, text, color);
+                if *kind == AppCheck::Available {
+                    view = secondary(ui, "View Update", true);
+                }
+            }
             check = secondary(ui, if checking { "Checking…" } else { "Check for Updates" }, !checking);
         });
         if check {
             self.check_app_update(ui.ctx());
+        }
+        if view {
+            self.page = super::Page::Drivers;
         }
         let s = &mut self.settings;
         setting(ui, ICON_DRIVERS, "Update DriverKeep automatically", "Each scan checks GitHub and installs any later version by itself.", |ui| {
@@ -437,4 +511,23 @@ impl App {
             ui.label(small("Made with Craft Anything"));
         });
     }
+}
+
+/// A progress bar the person can click or drag to set, for the preview. Gives true when moved.
+fn drag_bar(ui: &mut egui::Ui, percent: &mut f32) -> bool {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 18.0), Sense::click_and_drag());
+    let track = egui::Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 6.0));
+    ui.painter().rect_filled(track, 3.0, pal().line);
+    let mut filled = track;
+    filled.set_width(track.width() * (*percent / 100.0).clamp(0.0, 1.0));
+    ui.painter().rect_filled(filled, 3.0, teal());
+    let mut moved = false;
+    if response.clicked() || response.dragged() {
+        if let Some(at) = response.interact_pointer_pos() {
+            *percent = ((at.x - rect.left()) / rect.width() * 100.0).clamp(0.0, 100.0);
+            moved = true;
+        }
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    moved
 }

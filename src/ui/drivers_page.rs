@@ -341,8 +341,8 @@ impl App {
             });
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Update your computer:").font(bold(20.0)));
-            ui.label(RichText::new(format!("{waiting} available")).font(bold(20.0)).color(CRITICAL));
+            ui.label(RichText::new("Updates:").font(bold(20.0)));
+            ui.label(RichText::new(format!("{waiting} available")).font(bold(20.0)).color(teal()));
         });
         ui.add_space(6.0);
         if installing {

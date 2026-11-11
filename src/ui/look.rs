@@ -395,6 +395,17 @@ pub fn pill(ui: &mut egui::Ui, text: &str, color: Color32) {
         });
 }
 
+/// A rounded coloured bar holding one short sentence, for results like "You have the latest version".
+pub fn status_bar(ui: &mut egui::Ui, text: &str, color: Color32) {
+    Frame::new()
+        .fill(color.gamma_multiply(0.16))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(13.0).color(color));
+        });
+}
+
 pub fn progress_bar(ui: &mut egui::Ui, percent: u32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 5.0), Sense::hover());
     ui.painter().rect_filled(rect, 2.5, pal().line);
