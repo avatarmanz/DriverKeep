@@ -490,6 +490,10 @@ pub fn setting_with(
     detail: &str,
     control: impl FnOnce(&mut egui::Ui),
 ) {
+    // While the settings are being searched, only the matching ones are drawn.
+    if !visible(title) {
+        return;
+    }
     card().show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
@@ -506,7 +510,32 @@ pub fn setting_with(
     ui.add_space(4.0);
 }
 
+thread_local! {
+    /// The titles of the settings that match what's typed in the settings search box, while it's in use.
+    static SEARCH_MATCHES: std::cell::RefCell<Option<std::collections::HashSet<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Turns the settings filter on (with the matching titles) or off (None).
+pub fn set_search_matches(matches: Option<std::collections::HashSet<String>>) {
+    SEARCH_MATCHES.with(|m| *m.borrow_mut() = matches);
+}
+
+/// True when the settings search is narrowing down what's shown.
+pub fn searching_settings() -> bool {
+    SEARCH_MATCHES.with(|m| m.borrow().is_some())
+}
+
+/// Whether the setting with this title should be drawn: always, unless a search is hiding it.
+pub fn visible(title: &str) -> bool {
+    SEARCH_MATCHES.with(|m| m.borrow().as_ref().is_none_or(|set| set.contains(title)))
+}
+
 pub fn group_title(ui: &mut egui::Ui, text: &str) {
+    // The group headings are left out of search results, where the groups would often be empty.
+    if searching_settings() {
+        return;
+    }
     ui.add_space(12.0);
     ui.label(RichText::new(text).font(bold(14.0)).color(pal().soft));
     ui.add_space(2.0);

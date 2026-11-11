@@ -132,7 +132,28 @@ impl App {
         let mut changed = false;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             if searching {
-                self.search_results(ui);
+                // The search works as a filter: every tab is drawn, but only the settings that match
+                // are shown, with their real controls, so they can be changed right here.
+                let found = search_settings(&self.settings_search);
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!("{} result{}", found.len(), plural(found.len())))
+                        .font(bold(14.0))
+                        .color(pal().soft),
+                );
+                ui.add_space(4.0);
+                if found.is_empty() {
+                    soft(ui, "Nothing matches. Try a different word, like \"backup\", \"schedule\" or \"restart\".");
+                    return;
+                }
+                set_search_matches(Some(found.iter().map(|(_, title, _)| title.to_string()).collect()));
+                self.general_tab(ui, &mut changed, &mut startup_changed);
+                self.customization_tab(ui, &mut changed);
+                self.scanning_tab(ui, &mut changed, &mut startup_changed);
+                self.installing_tab(ui, &mut changed);
+                self.backup_tab(ui, &mut changed);
+                self.about_tab(ui, &mut changed);
+                set_search_matches(None);
                 return;
             }
             match tab {
@@ -161,6 +182,9 @@ impl App {
         setting(ui, ICON_HIDE, "Launch in background", "Starts in the system tray with no window.", |ui| {
             *startup_changed |= toggle(ui, &mut s.start_hidden);
         });
+        setting(ui, ICON_SCAN, "Scan when DriverKeep opens", "Off, it opens to the Scan button and waits for you.", |ui| {
+            *changed |= toggle(ui, &mut s.scan_on_open);
+        });
         setting(ui, ICON_TRAY, "When closing the window", "Tray keeps the background helper working.", |ui| {
             for (choice, label) in [
                 (CloseChoice::Tray, "Stay in tray"),
@@ -169,9 +193,6 @@ impl App {
             ] {
                 *startup_changed |= ui.selectable_value(&mut s.close_choice, choice, label).changed();
             }
-        });
-        setting(ui, ICON_SCAN, "Scan when DriverKeep opens", "Off, it opens to the Scan button and waits for you.", |ui| {
-            *changed |= toggle(ui, &mut s.scan_on_open);
         });
 
         group_title(ui, "Other");
@@ -219,6 +240,7 @@ impl App {
             *changed |= toggle(ui, &mut s.follow_windows_accent);
         });
         let follow = s.follow_windows_accent;
+        if visible("Accent color") {
         ui.add_space(6.0);
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -260,8 +282,10 @@ impl App {
                 });
             });
         });
+        }
 
         group_title(ui, "Preview");
+        if visible("Preview") {
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             // The sample sits in its own outlined box so it reads as an example, not as settings.
@@ -319,6 +343,7 @@ impl App {
                     ui.label(small("The bar fills as an update downloads or installs. Click or drag it, or press Update Everything."));
                 });
         });
+        }
     }
 
     fn scanning_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool, startup_changed: &mut bool) {
@@ -584,6 +609,7 @@ impl App {
     fn about_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool) {
         group_title(ui, "DriverKeep");
         // Like the other rows, but the version number is in the accent color.
+        if visible("Version") {
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -601,6 +627,7 @@ impl App {
             });
         });
         ui.add_space(4.0);
+        }
         let mut check = false;
         let mut view = false;
         let checking = self.checking_app;
@@ -636,13 +663,15 @@ impl App {
         setting(ui, ICON_DRIVERS, "Update DriverKeep automatically", "Each scan checks GitHub and installs any later version by itself.", |ui| {
             *changed |= toggle(ui, &mut s.auto_update_app);
         });
-        group_title(ui, "Credits");
-        card().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(small("Created by avatarmanz"));
-            ui.label(small("Built with Claude by Anthropic"));
-            ui.label(small("Made with Craft Anything"));
-        });
+        if !searching_settings() {
+            group_title(ui, "Credits");
+            card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(small("Created by avatarmanz"));
+                ui.label(small("Built with Claude by Anthropic"));
+                ui.label(small("Made with Craft Anything"));
+            });
+        }
     }
 }
 
@@ -807,45 +836,6 @@ fn search_settings(query: &str) -> Vec<(SettingsTab, &'static str, &'static str)
     }
     found.sort_by(|a, b| b.0.cmp(&a.0));
     found.into_iter().map(|(_, tab, title, detail)| (tab, title, detail)).collect()
-}
-
-impl App {
-    /// What the settings page shows instead of a tab while something is typed in the search box.
-    fn search_results(&mut self, ui: &mut egui::Ui) {
-        let found = search_settings(&self.settings_search);
-        group_title(ui, &format!("{} result{}", found.len(), plural(found.len())));
-        if found.is_empty() {
-            soft(ui, "Nothing matches. Try a different word, like \"backup\", \"schedule\" or \"restart\".");
-            return;
-        }
-        let mut open = None;
-        for (tab, title, detail) in found {
-            let name = SettingsTab::ALL.iter().find(|(t, _)| *t == tab).map_or("", |(_, n)| *n);
-            card().show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    beside_centered(ui, 150.0, |ui| {
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 1.0;
-                            ui.label(RichText::new(title).size(14.0));
-                            ui.label(small(detail));
-                        });
-                    });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if secondary(ui, "Go", true) {
-                            open = Some(tab);
-                        }
-                        pill(ui, name, BLUE);
-                    });
-                });
-            });
-            ui.add_space(4.0);
-        }
-        if let Some(tab) = open {
-            self.settings_tab = tab;
-            self.settings_search.clear();
-        }
-    }
 }
 
 #[cfg(test)]
