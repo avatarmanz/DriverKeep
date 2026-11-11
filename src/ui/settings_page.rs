@@ -102,6 +102,9 @@ impl App {
                 *startup_changed |= ui.selectable_value(&mut s.close_choice, choice, label).changed();
             }
         });
+        setting(ui, ICON_SCAN, "Scan when DriverKeep opens", "Off, it opens to the Scan button and waits for you.", |ui| {
+            *changed |= toggle(ui, &mut s.scan_on_open);
+        });
 
         group_title(ui, "Other");
         setting(ui, ICON_BELL, "Notify me", "Shows a small tray message when updates are found.", |ui| {
@@ -349,9 +352,6 @@ impl App {
         setting(ui, ICON_SCAN, "Scan when the helper starts", "One background scan each time your PC starts.", |ui| {
             *changed |= toggle(ui, &mut s.scan_at_startup);
         });
-        setting(ui, ICON_SCAN, "Scan when DriverKeep opens", "Off, it opens to the Scan button and waits for you.", |ui| {
-            *changed |= toggle(ui, &mut s.scan_on_open);
-        });
     }
 
     fn installing_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool) {
@@ -379,9 +379,6 @@ impl App {
         }
 
         group_title(ui, "Drivers");
-        setting(ui, ICON_BELL, "Ask before updating drivers", "Shows a reminder before driver updates start.", |ui| {
-            *changed |= toggle(ui, &mut s.update_all_remind);
-        });
         setting(ui, ICON_DRIVERS, "Include drivers in Update Everything", "Ticked after each scan.", |ui| {
             *changed |= toggle(ui, &mut s.pick_drivers);
         });
@@ -393,6 +390,9 @@ impl App {
                 *changed |= toggle(ui, &mut s.silent_catalog);
             });
         }
+        setting(ui, ICON_BELL, "Ask before updating drivers", "Shows a reminder before driver updates start.", |ui| {
+            *changed |= toggle(ui, &mut s.update_all_remind);
+        });
 
         group_title(ui, "Windows updates");
         setting(ui, ICON_SYSTEM, "Include Windows updates in Update Everything", "Ticked after each scan.", |ui| {

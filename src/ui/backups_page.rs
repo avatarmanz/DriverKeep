@@ -28,9 +28,16 @@ impl App {
             .filter(|d| self.backup_visible(d) && self.backup_picks.contains(&d.instance_id))
             .count();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Backups:").font(bold(20.0)));
+            // Clicking the title or the count scrolls down to the saved backups.
             let saved = self.backups.len();
-            ui.label(RichText::new(format!("{saved} available")).font(bold(20.0)).color(teal()));
+            let title = egui::Label::new(RichText::new("Backups:").font(bold(20.0))).sense(Sense::click());
+            let amount = egui::Label::new(RichText::new(format!("{saved} available")).font(bold(20.0)).color(teal()))
+                .sense(Sense::click());
+            let jump = ui.add(title).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+                | ui.add(amount).on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
+            if jump {
+                self.jump_to_backups = true;
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let label = format!("Back Up {count} Driver{}", plural(count));
                 if primary(ui, &label, count > 0 && self.busy == Busy::Idle) {
@@ -251,8 +258,10 @@ impl App {
             ui.add_space(8.0);
             return;
         };
-        let records: Vec<Record> =
+        let mut records: Vec<Record> =
             self.history.iter().filter(|r| super::day_of(r.when) == day).cloned().collect();
+        // Changes that can be put back come first; the ones that can't go below them.
+        records.sort_by_key(|r| r.backup.is_none());
         let mut undo = None;
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -321,7 +330,10 @@ impl App {
     }
 
     fn backup_list(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Saved backups");
+        let title = ui.label(RichText::new("Saved backups").font(bold(16.0)));
+        if std::mem::take(&mut self.jump_to_backups) {
+            title.scroll_to_me(Some(Align::TOP));
+        }
         ui.add_space(2.0);
         if self.backups.is_empty() {
             soft(ui, "None yet. Back up now, or update a driver and one is saved for you.");

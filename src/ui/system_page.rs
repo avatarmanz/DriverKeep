@@ -21,6 +21,9 @@ impl App {
                 if secondary(ui, "Save as…", !self.devices.is_empty()) {
                     self.save_list();
                 }
+                if secondary(ui, "Copy to Clipboard", !self.devices.is_empty()) {
+                    self.copy_list(ui.ctx());
+                }
             });
         });
         ui.add_space(6.0);
@@ -218,14 +221,8 @@ impl App {
         ui.add_space(4.0);
     }
 
-    fn save_list(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
-            .set_file_name("my-computer.txt")
-            .add_filter("Text file", &["txt"])
-            .save_file()
-        else {
-            return;
-        };
+    /// The whole page as plain text, for saving or copying.
+    fn list_text(&self) -> String {
         let mut lines = Vec::new();
         if let Some(info) = &self.system {
             for section in &info.sections {
@@ -246,7 +243,23 @@ impl App {
                 driver.date
             ));
         }
-        self.message = Some(match std::fs::write(&path, lines.join("\r\n")) {
+        lines.join("\r\n")
+    }
+
+    fn copy_list(&mut self, ctx: &egui::Context) {
+        ctx.copy_text(self.list_text());
+        self.message = Some(("Copied to the clipboard.".into(), false));
+    }
+
+    fn save_list(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_file_name("my-computer.txt")
+            .add_filter("Text file", &["txt"])
+            .save_file()
+        else {
+            return;
+        };
+        self.message = Some(match std::fs::write(&path, self.list_text()) {
             Ok(()) => (format!("Saved to {}.", path.display()), false),
             Err(error) => (format!("Couldn't save it: {error}"), true),
         });

@@ -83,7 +83,7 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
             ui.add_enabled(!installing, egui::Checkbox::without_text(&mut row.selected));
             text_left = ui.cursor().left();
             // The status pill ("Downloading 100%") plus the ··· menu is the widest thing on the right.
-            beside(ui, if installing { 360.0 } else { 220.0 }, |ui| {
+            beside(ui, 360.0, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(row_name(row, &list)).size(14.0));
@@ -97,30 +97,25 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                 ui.label(small(row_detail(row, &list)));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if installing {
-                    // While a job runs the menu only had this one choice, so it's a button instead.
-                    // An update that's already installing can't be taken back, so it isn't offered.
-                    let early = matches!(row.state, ItemState::Waiting | ItemState::SavingBackup | ItemState::Downloading);
-                    if early && pill_button(ui, "Ignore This Update", CAUTION) {
-                        clicks.ignore = Some(row.update.id.clone());
-                    }
-                } else {
+                // The ··· menu only appears when it has something besides Ignore to offer.
+                let retry = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
+                let driver = row.update.kind == Kind::Driver && can_install(row);
+                if !installing && (retry || driver) {
                     ui.menu_button("···", |ui| {
-                        let retry = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
                         if retry && ui.button("Try again").clicked() {
                             clicks.install = Some(vec![row.update.id.clone()]);
                             ui.close();
                         }
-                        let driver = row.update.kind == Kind::Driver && can_install(row);
                         if driver && ui.button("Install without a backup").clicked() {
                             clicks.no_backup = Some(row.update.id.clone());
                             ui.close();
                         }
-                        if ui.button("Ignore this update").clicked() {
-                            clicks.ignore = Some(row.update.id.clone());
-                            ui.close();
-                        }
                     });
+                }
+                // An update that's already installing or done can't be taken back, so it isn't offered.
+                let can_ignore = !matches!(row.state, ItemState::Installing | ItemState::Installed | ItemState::NeedsRestart);
+                if can_ignore && pill_button(ui, "Ignore This Update", CAUTION) {
+                    clicks.ignore = Some(row.update.id.clone());
                 }
                 match state_pill(row) {
                     Some((text, color)) => pill(ui, &text, color),
@@ -423,13 +418,15 @@ impl App {
         fine.sort_by_key(|d| d.name.to_lowercase());
         card().inner_margin(Margin::symmetric(14, 8)).show(ui, |ui| {
             ui.set_width(ui.available_width());
+            let mut toggle = false;
             let header = ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("Drivers up to date ({})", fine.len())).size(14.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(small(if self.show_uptodate { "Hide" } else { "Show" }));
+                    // The same button as Hide on the other sections, so it's clear it can be clicked.
+                    toggle = ui.small_button(if self.show_uptodate { "Hide" } else { "Show" }).clicked();
                 });
             });
-            if header.response.interact(Sense::click()).clicked() {
+            if toggle || header.response.interact(Sense::click()).clicked() {
                 self.show_uptodate = !self.show_uptodate;
             }
             if self.show_uptodate {

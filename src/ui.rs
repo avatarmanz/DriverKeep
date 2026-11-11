@@ -181,6 +181,8 @@ pub struct App {
     helper_job: Option<HelperJob>,
     /// Cancel Updates was pressed; the current update is finishing or being dropped.
     cancelling: bool,
+    /// The Backups page was asked to scroll down to the saved backups.
+    jump_to_backups: bool,
     /// What the running job was asked to install, so the sidebar can count down what's left.
     job_ids: Vec<String>,
     /// Update Everything is offered after a scan, and goes away once a job has run.
@@ -268,6 +270,7 @@ impl App {
             windows_accent_read: None,
             helper_job: None,
             cancelling: false,
+            jump_to_backups: false,
             job_ids: Vec::new(),
             updates_ready: true,
             checking_app: false,
@@ -296,6 +299,9 @@ impl App {
                 app.bring_forward = true;
             }
         }
+        // Show the last results straight away. Without this the window starts on the empty "Scan"
+        // page until the hardware list has loaded, then jumps to the updates.
+        app.rebuild_rows();
         app.refresh_devices(&cc.egui_ctx);
         app.refresh_system(&cc.egui_ctx);
         app.refresh_tools(&cc.egui_ctx);
@@ -1059,12 +1065,11 @@ impl App {
             if chosen { Color32::WHITE } else { p.soft },
         );
         if count > 0 {
-            let center = inner.center() + Vec2::new(15.0, -19.0);
-            // The accent color, like the "4 available" in the header. On the selected tab, which is
-            // already the accent color, it flips to a white circle with an accent number.
-            let (fill, ink) = if chosen { (Color32::WHITE, teal()) } else { (teal(), Color32::WHITE) };
-            ui.painter().circle_filled(center, 8.5, fill);
-            ui.painter().text(center, Align2::CENTER_CENTER, count.to_string(), FontId::proportional(10.5), ink);
+            // The count sits inside the circle of arrows and stays upright while they turn. It's the
+            // accent color like the "4 available" in the header, or white on the selected tab.
+            let ink = if chosen { Color32::WHITE } else { teal() };
+            let size = if count >= 10 { 8.5 } else { 10.0 };
+            ui.painter().text(glyph_at + Vec2::new(0.5, -1.0), Align2::CENTER_CENTER, count.to_string(), bold(size), ink);
         }
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             self.page = page;
