@@ -383,6 +383,25 @@ fn install_requested(
     }
 }
 
+/// The short-lived administrator copy that Windows' permission box starts while the window stays
+/// open. It does the one install the window asked for, reports progress, and exits.
+pub fn install_job() {
+    let (event_tx, events) = channel();
+    let engine = wu::start(event_tx, || {});
+    let started = std::time::Instant::now();
+    let request = loop {
+        if let Some(request) = crate::handoff::take_request(true) {
+            break request;
+        }
+        if started.elapsed().as_secs() > 20 {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let mut settings = Settings::load();
+    install_requested(&engine, &events, &mut settings, request);
+}
+
 /// With the setting on, installs a later release of DriverKeep found by the last scan.
 /// Setup closes this helper and starts it again, so nothing after this runs if it works.
 fn update_self(engine: &wu::Engine, events: &std::sync::mpsc::Receiver<Event>, settings: &Settings) {
@@ -527,7 +546,7 @@ pub fn run(open_window: bool) {
         // Looks for an install request from the window, once a second.
         std::thread::spawn(|| loop {
             std::thread::sleep(Duration::from_secs(1));
-            if let Some(request) = crate::handoff::take_request() {
+            if let Some(request) = crate::handoff::take_request(false) {
                 ask(Ask::Install(request));
             }
         });

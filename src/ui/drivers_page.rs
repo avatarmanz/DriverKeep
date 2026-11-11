@@ -124,8 +124,10 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                 }
                 match state_pill(row) {
                     Some((text, color)) => pill(ui, &text, color),
+                    // While a job runs the row only offers Ignore; "Update" would just sit greyed out.
+                    None if installing => {}
                     None => {
-                        if secondary(ui, "Update", !installing) {
+                        if secondary(ui, "Update", true) {
                             clicks.install = Some(vec![row.update.id.clone()]);
                         }
                     }
@@ -280,7 +282,8 @@ impl App {
                         if ui.small_button(if folded { "Show" } else { "Hide" }).clicked() {
                             clicks.fold = Some(kind);
                         }
-                        if secondary(ui, button, idle && !open.is_empty()) {
+                        // Hidden during a job, since that group is already being updated.
+                        if idle && secondary(ui, button, !open.is_empty()) {
                             clicks.install = Some(open.clone());
                         }
                     });

@@ -33,6 +33,8 @@ struct HelperJob {
     skip_backup: bool,
     /// Updates ignored while the helper works, and whether the person asked to stop.
     left_out: Vec<String>,
+    /// Done by a copy started through Windows' permission box, not the background helper.
+    worker: bool,
 }
 
 /// What the Check for Updates button found out.
@@ -839,39 +841,47 @@ impl App {
     fn install_or_elevate(&mut self, ids: Vec<String>, skip_backup: bool, ctx: &egui::Context) {
         if self.admin {
             self.run_update(ids, skip_backup);
-        } else if handoff::helper_available(&self.settings) && self.hand_to_helper(&ids, skip_backup) {
+        } else if handoff::helper_available(&self.settings) && self.hand_to_helper(&ids, skip_backup, false) {
             // The helper's progress is picked up in poll_helper_job.
-        } else {
-            self.elevate_update(ids, skip_backup, ctx);
+        } else if !self.hand_to_helper(&ids, skip_backup, true) {
+            self.message = Some(("Windows didn't give permission, so nothing was changed.".into(), true));
         }
+        let _ = ctx;
     }
 
-    fn elevate_update(&mut self, ids: Vec<String>, skip_backup: bool, ctx: &egui::Context) {
-        let job = if skip_backup {
-            format!("update-no-backup:{}", ids.first().cloned().unwrap_or_default())
-        } else {
-            format!("update:{}", ids.join(","))
-        };
-        self.elevate(job, ctx);
-    }
-
-    fn hand_to_helper(&mut self, ids: &[String], skip_backup: bool) -> bool {
-        let request = handoff::Request { id: handoff::new_request_id(), ids: ids.to_vec(), skip_backup };
+    /// Hands the install to something that already has (or is about to get) administrator rights,
+    /// and follows its progress. With `worker` set, Windows' permission box appears and a short-lived
+    /// administrator copy does the work while this window stays open. Gives false if that was refused.
+    fn hand_to_helper(&mut self, ids: &[String], skip_backup: bool, worker: bool) -> bool {
+        let request = handoff::Request { id: handoff::new_request_id(), ids: ids.to_vec(), skip_backup, worker };
         if !handoff::send(&request) {
             return false;
         }
-        // Wakes the helper if it isn't running yet; it picks the request up when it starts.
-        system::start_agent();
+        if worker {
+            // The permission box. If it's declined, nothing was started.
+            if !system::run_as_admin("--install-job", false) {
+                handoff::withdraw();
+                return false;
+            }
+        } else {
+            // Wakes the helper if it isn't running yet; it picks the request up when it starts.
+            system::start_agent();
+        }
         self.notes.clear();
         self.busy = Busy::Installing;
         self.percent = 1;
-        self.status = "Asking the background helper to install. No restart is needed.".into();
+        self.status = if worker {
+            "Starting the installer with administrator rights".into()
+        } else {
+            "Asking the background helper to install. No restart is needed.".into()
+        };
         self.helper_job = Some(HelperJob {
             request: request.id,
             started: std::time::Instant::now(),
             ids: ids.to_vec(),
             skip_backup,
             left_out: Vec::new(),
+            worker,
         });
         self.cancelling = false;
         true
@@ -956,8 +966,17 @@ impl App {
     fn give_up_on_helper(&mut self, ctx: &egui::Context, reason: &str) {
         let Some(job) = self.helper_job.take() else { return };
         self.busy = Busy::Idle;
-        self.notes.push(format!("{reason} Using Windows' permission box instead."));
-        self.elevate_update(job.ids, job.skip_backup, ctx);
+        let _ = ctx;
+        handoff::withdraw();
+        if job.worker {
+            self.message = Some((format!("{reason} Nothing was installed. Try again."), true));
+        } else {
+            // The background helper isn't available, so Windows' permission box is used instead.
+            self.notes.push(format!("{reason} Using Windows' permission box instead."));
+            if !self.hand_to_helper(&job.ids, job.skip_backup, true) {
+                self.message = Some(("Windows didn't give permission, so nothing was changed.".into(), true));
+            }
+        }
     }
 
     fn elevate(&mut self, job: String, ctx: &egui::Context) {
@@ -972,15 +991,16 @@ impl App {
     fn rail(&mut self, ui: &mut egui::Ui) {
         ui.add_space(14.0);
         let badge = self.open_rows();
-        self.rail_item(ui, Page::Drivers, ICON_DRIVERS, "Updates", badge);
-        self.rail_item(ui, Page::Backups, ICON_BACKUP, "Backups", 0);
-        self.rail_item(ui, Page::System, ICON_SYSTEM, "System Info", 0);
+        let installing = self.busy == Busy::Installing;
+        self.rail_item(ui, Page::Drivers, ICON_DRIVERS, "Updates", badge, installing);
+        self.rail_item(ui, Page::Backups, ICON_BACKUP, "Backups", 0, false);
+        self.rail_item(ui, Page::System, ICON_SYSTEM, "System Info", 0, false);
         let space = ui.available_height() - 72.0;
         ui.add_space(space.max(0.0));
-        self.rail_item(ui, Page::Settings, ICON_SETTINGS, "Settings", 0);
+        self.rail_item(ui, Page::Settings, ICON_SETTINGS, "Settings", 0, false);
     }
 
-    fn rail_item(&mut self, ui: &mut egui::Ui, page: Page, glyph: &str, label: &str, count: usize) {
+    fn rail_item(&mut self, ui: &mut egui::Ui, page: Page, glyph: &str, label: &str, count: usize, spinning: bool) {
         let width = ui.available_width();
         // Tall enough that the count badge sits fully inside the highlighted box.
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 64.0), Sense::click());
@@ -1007,7 +1027,16 @@ impl App {
             FontId::proportional(11.5),
             if chosen { Color32::WHITE } else { p.soft },
         );
-        if count > 0 {
+        if spinning {
+            // A job is running: a turning circle where the count would be, on every page.
+            let center = inner.center() + Vec2::new(15.0, -17.0);
+            let color = if chosen { Color32::WHITE } else { teal() };
+            ui.put(
+                egui::Rect::from_center_size(center, Vec2::splat(20.0)),
+                egui::Spinner::new().size(16.0).color(color),
+            );
+            ui.ctx().request_repaint();
+        } else if count > 0 {
             let center = inner.center() + Vec2::new(15.0, -17.0);
             ui.painter().circle_filled(center, 8.5, CRITICAL);
             ui.painter().text(

@@ -18,6 +18,10 @@ pub struct Request {
     pub id: u64,
     pub ids: Vec<String>,
     pub skip_backup: bool,
+    /// For the short-lived administrator copy that Windows' permission box starts, not the
+    /// background helper. Each only picks up the requests meant for it.
+    #[serde(default)]
+    pub worker: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -126,11 +130,22 @@ pub fn send(request: &Request) -> bool {
 }
 
 /// Helper side: picks up a waiting request, if any.
-pub fn take_request() -> Option<Request> {
+pub fn take_request(worker: bool) -> Option<Request> {
     let path = file(REQUEST_FILE)?;
     let text = std::fs::read_to_string(&path).ok()?;
+    let request: Request = serde_json::from_str(&text).ok()?;
+    if request.worker != worker {
+        return None;
+    }
     let _ = std::fs::remove_file(&path);
-    serde_json::from_str(&text).ok()
+    Some(request)
+}
+
+/// Window side: withdraws a request nobody picked up.
+pub fn withdraw() {
+    if let Some(path) = file(REQUEST_FILE) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Changes of mind while the helper installs: stop, or leave particular updates out.

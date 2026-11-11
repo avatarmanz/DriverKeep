@@ -28,6 +28,7 @@ pub struct Options {
     pub check_backup: Option<PathBuf>,
     pub only: Option<String>,
     pub background: bool,
+    pub install_job: bool,
     pub open: bool,
     pub helper_task: Option<String>,
     pub install_tools: Option<String>,
@@ -50,6 +51,7 @@ fn read_options() -> Options {
             "--check-backup" => options.check_backup = args.next().map(PathBuf::from),
             "--only" => options.only = args.next(),
             "--background" => options.background = true,
+            "--install-job" => options.install_job = true,
             "--open" => options.open = true,
             "--helper-task" => options.helper_task = args.next(),
             "--install-tools" => options.install_tools = args.next(),
@@ -194,6 +196,10 @@ fn main() -> eframe::Result {
     }
     if let Some(state) = &options.helper_task {
         system::set_agent_task(state == "on");
+        return Ok(());
+    }
+    if options.install_job {
+        agent::install_job();
         return Ok(());
     }
     if options.background {
