@@ -13,6 +13,7 @@ use crate::Options;
 use crate::agent;
 use crate::backup::{self, BackupEntry, BackupFile, RestoreResult, RestoreState};
 use crate::devices::{self, Device};
+use crate::handoff;
 use crate::history::{self, Record};
 use crate::sysinfo::{self, SystemInfo};
 use crate::system::{self, CloseChoice, Settings, Theme};
@@ -23,6 +24,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
+
+/// An install the window handed to the background helper, while it's still going.
+struct HelperJob {
+    request: u64,
+    started: std::time::Instant,
+    ids: Vec<String>,
+    skip_backup: bool,
+}
 
 /// What the Check for Updates button found out.
 #[derive(Clone, Copy, PartialEq)]
@@ -165,6 +174,7 @@ pub struct App {
 
     windows_accent: Option<[u8; 3]>,
     windows_accent_read: Option<std::time::Instant>,
+    helper_job: Option<HelperJob>,
     checking_app: bool,
     app_check: Option<(String, AppCheck)>,
     preview_percent: f32,
@@ -246,6 +256,7 @@ impl App {
             events,
             windows_accent: None,
             windows_accent_read: None,
+            helper_job: None,
             checking_app: false,
             app_check: None,
             preview_percent: 60.0,
@@ -484,6 +495,7 @@ impl App {
     }
 
     fn receive(&mut self, ctx: &egui::Context) {
+        self.poll_helper_job(ctx);
         while let Ok(work) = self.rx.try_recv() {
             match work {
                 Work::AppUpdate(result) => {
@@ -813,6 +825,96 @@ impl App {
         });
     }
 
+    /// Installs now when this window is already an administrator. Otherwise the background helper
+    /// does it, if it's switched on in Settings, so nothing restarts. Only when neither is
+    /// possible does Windows show its permission box and the program reopens.
+    fn install_or_elevate(&mut self, ids: Vec<String>, skip_backup: bool, ctx: &egui::Context) {
+        if self.admin {
+            self.run_update(ids, skip_backup);
+        } else if handoff::helper_available(&self.settings) && self.hand_to_helper(&ids, skip_backup) {
+            // The helper's progress is picked up in poll_helper_job.
+        } else {
+            self.elevate_update(ids, skip_backup, ctx);
+        }
+    }
+
+    fn elevate_update(&mut self, ids: Vec<String>, skip_backup: bool, ctx: &egui::Context) {
+        let job = if skip_backup {
+            format!("update-no-backup:{}", ids.first().cloned().unwrap_or_default())
+        } else {
+            format!("update:{}", ids.join(","))
+        };
+        self.elevate(job, ctx);
+    }
+
+    fn hand_to_helper(&mut self, ids: &[String], skip_backup: bool) -> bool {
+        let request = handoff::Request { id: handoff::new_request_id(), ids: ids.to_vec(), skip_backup };
+        if !handoff::send(&request) {
+            return false;
+        }
+        // Wakes the helper if it isn't running yet; it picks the request up when it starts.
+        system::start_agent();
+        self.notes.clear();
+        self.busy = Busy::Installing;
+        self.percent = 1;
+        self.status = "Asking the background helper to install. No restart is needed.".into();
+        self.helper_job = Some(HelperJob {
+            request: request.id,
+            started: std::time::Instant::now(),
+            ids: ids.to_vec(),
+            skip_backup,
+        });
+        true
+    }
+
+    /// Follows the helper's progress file while it installs, and falls back to the permission
+    /// box if the helper never answers or says it can't.
+    fn poll_helper_job(&mut self, ctx: &egui::Context) {
+        let Some(job) = &self.helper_job else { return };
+        ctx.request_repaint_after(std::time::Duration::from_millis(400));
+        let (request, waited) = (job.request, job.started.elapsed());
+        let Some(progress) = handoff::read_progress(request) else {
+            if waited.as_secs() >= 30 {
+                self.give_up_on_helper(ctx, "The background helper didn't answer.");
+            }
+            return;
+        };
+        if progress.refused {
+            self.give_up_on_helper(ctx, &progress.text);
+            return;
+        }
+        for item in &progress.items {
+            if let Some(row) = self.rows.iter_mut().find(|r| r.update.id == item.id) {
+                row.state = item.to_state();
+                row.percent = item.percent;
+            }
+        }
+        self.percent = progress.percent.max(1);
+        if !progress.text.is_empty() {
+            self.status = progress.text.clone();
+        }
+        self.notes = progress.notes.clone();
+        if progress.finished {
+            self.helper_job = None;
+            self.busy = Busy::Idle;
+            self.restart_needed |= progress.restart;
+            self.reload_backups();
+            self.refresh_devices(ctx);
+        } else if chrono::Local::now().timestamp() - progress.updated > 120 {
+            // Nothing for two minutes: the helper has stopped.
+            self.helper_job = None;
+            self.busy = Busy::Idle;
+            self.message = Some(("The background helper stopped responding. Try the update again.".into(), true));
+        }
+    }
+
+    fn give_up_on_helper(&mut self, ctx: &egui::Context, reason: &str) {
+        let Some(job) = self.helper_job.take() else { return };
+        self.busy = Busy::Idle;
+        self.notes.push(format!("{reason} Using Windows' permission box instead."));
+        self.elevate_update(job.ids, job.skip_backup, ctx);
+    }
+
     fn elevate(&mut self, job: String, ctx: &egui::Context) {
         if system::run_as_admin(&format!("--resume \"{job}\""), false) {
             self.closing = true;
@@ -1057,10 +1159,10 @@ impl App {
                     .iter()
                     .filter(|r| ids.contains(&r.update.id))
                     .all(|r| r.update.source == Source::GitHub);
-                if self.admin || only_this_app {
+                if only_this_app {
                     self.run_update(ids, false);
                 } else {
-                    self.elevate(format!("update:{}", ids.join(",")), ctx);
+                    self.install_or_elevate(ids, false, ctx);
                 }
                 return;
             }
@@ -1158,10 +1260,8 @@ impl App {
             }
             let Some(ask) = self.ask.take() else { return };
             match ask {
-                Ask::Update(ids) if self.admin => self.run_update(ids, false),
-                Ask::Update(ids) => self.elevate(format!("update:{}", ids.join(",")), ctx),
-                Ask::UpdateNoBackup(id) if self.admin => self.run_update(vec![id], true),
-                Ask::UpdateNoBackup(id) => self.elevate(format!("update-no-backup:{id}"), ctx),
+                Ask::Update(ids) => self.install_or_elevate(ids, false, ctx),
+                Ask::UpdateNoBackup(id) => self.install_or_elevate(vec![id], true, ctx),
                 Ask::Restore(path, entries) if self.admin => self.run_restore(path, entries, ctx),
                 Ask::Restore(path, entries) => {
                     let ids: Vec<&str> = entries.iter().map(|e| e.instance_id.as_str()).collect();

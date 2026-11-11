@@ -27,6 +27,8 @@ enum Ask {
     ScanNow,
     CancelRestart,
     Quit,
+    /// The window asked this helper (which can run as administrator) to install updates.
+    Install(crate::handoff::Request),
 }
 
 static TO_WORKER: OnceLock<Mutex<Sender<Ask>>> = OnceLock::new();
@@ -285,6 +287,85 @@ fn scan_and_maybe_install(
     }
 }
 
+/// Installs what the window asked for, and reports progress in a file the window reads. The helper
+/// does its own scan and only installs updates it finds itself that match the request. Returns
+/// true when a restart is needed.
+fn install_requested(
+    engine: &wu::Engine,
+    events: &std::sync::mpsc::Receiver<Event>,
+    settings: &mut Settings,
+    request: crate::handoff::Request,
+) -> bool {
+    use crate::handoff::{self, Progress};
+    let mut progress = Progress::new(request.id);
+    // Without administrator rights nothing here could install, so the window uses the other way.
+    if !system::is_admin() {
+        progress.refused = true;
+        progress.finished = true;
+        progress.text = "The background helper isn't running as administrator.".into();
+        handoff::write_progress(&mut progress);
+        return false;
+    }
+    progress.percent = 2;
+    progress.text = "Checking what's available".into();
+    handoff::write_progress(&mut progress);
+
+    let _ = engine.commands.send(Command::Scan(ScanPlan::from_settings(settings)));
+    let (devices, updates) = wait_for_scan(events, settings);
+    let items: Vec<InstallItem> = updates
+        .into_iter()
+        .filter(|u| request.ids.contains(&u.id) && u.source != Source::GitHub)
+        .map(|update| InstallItem {
+            devices: devices.iter().filter(|d| update.devices.contains(&d.instance_id)).cloned().collect(),
+            update,
+        })
+        .collect();
+    if items.is_empty() {
+        progress.finished = true;
+        progress.percent = 100;
+        progress.text = "Finished".into();
+        progress.notes.push("Those updates aren't offered any more, so nothing was installed.".into());
+        handoff::write_progress(&mut progress);
+        return false;
+    }
+
+    let today = system::restore_point_day();
+    let restore_point = settings.make_restore_point && settings.last_restore_point_day != today;
+    if restore_point {
+        settings.last_restore_point_day = today;
+        settings.save();
+    }
+    let _ = engine.commands.send(Command::Install(InstallPlan {
+        items,
+        restore_point,
+        backup_folder: (settings.backup_before_update && !request.skip_backup)
+            .then(|| settings.backup_folder.clone()),
+        require_backup: !settings.install_without_backup,
+        automatic: false,
+    }));
+    loop {
+        match events.recv() {
+            Ok(Event::Status { percent, text }) => {
+                progress.percent = percent;
+                progress.text = text;
+            }
+            Ok(Event::Item { id, state }) => progress.set_state(&id, &state),
+            Ok(Event::ItemProgress { id, percent }) => progress.set_percent(&id, percent),
+            Ok(Event::Note(text)) => progress.notes.push(text),
+            Ok(Event::InstallFinished { restart, .. }) => {
+                progress.finished = true;
+                progress.restart = restart;
+                progress.percent = 100;
+                handoff::write_progress(&mut progress);
+                return restart;
+            }
+            Ok(_) => continue,
+            Err(_) => return false,
+        }
+        handoff::write_progress(&mut progress);
+    }
+}
+
 /// With the setting on, installs a later release of DriverKeep found by the last scan.
 /// Setup closes this helper and starts it again, so nothing after this runs if it works.
 fn update_self(engine: &wu::Engine, events: &std::sync::mpsc::Receiver<Event>, settings: &Settings) {
@@ -372,6 +453,9 @@ fn worker(inbox: std::sync::mpsc::Receiver<Ask>, first_run: bool) {
                 }
                 tell(system::APP_NAME, "Restart cancelled.");
             }
+            Ok(Ask::Install(request)) => {
+                restart_due |= install_requested(&engine, &events, &mut settings, request);
+            }
             Ok(Ask::Quit) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {}
         }
@@ -423,6 +507,13 @@ pub fn run(open_window: bool) {
         let (tx, inbox) = channel();
         let _ = TO_WORKER.set(Mutex::new(tx));
         std::thread::spawn(move || worker(inbox, true));
+        // Looks for an install request from the window, once a second.
+        std::thread::spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(1));
+            if let Some(request) = crate::handoff::take_request() {
+                ask(Ask::Install(request));
+            }
+        });
 
         let mut message = MSG::default();
         while GetMessageW(&mut message, None, 0, 0).as_bool() {

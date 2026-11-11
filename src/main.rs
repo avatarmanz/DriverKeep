@@ -4,6 +4,7 @@ mod agent;
 mod backup;
 mod catalog;
 mod devices;
+mod handoff;
 mod history;
 mod selfupdate;
 mod software;
