@@ -6,19 +6,46 @@ use egui::{
     Margin, Pos2, RichText, Sense, Stroke, Vec2,
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateIcon, FindWindowW, HICON, IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow,
 };
 use windows::core::{HSTRING, PCWSTR};
 
-// Status colours read from the original's theme file; the teal is from the person's pictures.
+// Status colours read from the original's theme file; the teal() is from the person's pictures.
 pub const SUCCESS: Color32 = Color32::from_rgb(0x3B, 0xBF, 0x88);
 pub const CAUTION: Color32 = Color32::from_rgb(0xFF, 0x87, 0x3B);
 pub const CRITICAL: Color32 = Color32::from_rgb(0xFF, 0x57, 0x57);
 pub const BLUE: Color32 = Color32::from_rgb(0x4A, 0x6A, 0xE0);
 pub const SKY: Color32 = Color32::from_rgb(0x5C, 0x9D, 0xF5);
-pub const TEAL: Color32 = Color32::from_rgb(0x2A, 0xAE, 0x9B);
+
+/// The accent colour the person chose in Settings. It starts as the original teal.
+pub const DEFAULT_ACCENT: [u8; 3] = [0x2A, 0xAE, 0x9B];
+
+/// Ready-made accent colours, shown as swatches in Settings.
+pub const ACCENTS: [(&str, [u8; 3]); 8] = [
+    ("Teal", DEFAULT_ACCENT),
+    ("Blue", [0x4A, 0x6A, 0xE0]),
+    ("Sky", [0x2F, 0x8F, 0xE8]),
+    ("Purple", [0x8B, 0x5C, 0xF6]),
+    ("Pink", [0xD9, 0x46, 0x9B]),
+    ("Red", [0xE0, 0x4F, 0x4F]),
+    ("Orange", [0xE8, 0x7A, 0x2B]),
+    ("Green", [0x3B, 0xA8, 0x5C]),
+];
+
+static ACCENT: AtomicU32 = AtomicU32::new(0x2A_AE_9B);
+
+/// Gives true when the accent changed, so the colours that were set up once can be redone.
+pub fn set_accent(rgb: [u8; 3]) -> bool {
+    let value = u32::from_be_bytes([0, rgb[0], rgb[1], rgb[2]]);
+    ACCENT.swap(value, Ordering::Relaxed) != value
+}
+
+pub fn teal() -> Color32 {
+    let [_, r, g, b] = ACCENT.load(Ordering::Relaxed).to_be_bytes();
+    Color32::from_rgb(r, g, b)
+}
 
 #[derive(Clone, Copy)]
 pub struct Pal {
@@ -144,7 +171,7 @@ pub fn bring_to_front() -> bool {
     false
 }
 
-/// A rounded blue-to-teal square with a white tick.
+/// A rounded blue-to-teal() square with a white tick.
 fn icon_pixel(x: u32, y: u32, size: u32) -> [u8; 4] {
     let s = size as f32;
     let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
@@ -233,6 +260,19 @@ pub fn install_look(ctx: &egui::Context) {
         fonts.families.insert(FontFamily::Name(ICON_FONT.into()), vec![ICON_FONT.into()]);
     }
     ctx.set_fonts(fonts);
+    // egui moves 40 points per wheel notch, which feels slow next to other Windows programs.
+    ctx.options_mut(|options| options.input_options.line_scroll_speed = 110.0);
+    apply_style(ctx);
+}
+
+/// The app's icon as a picture, so the window shows the same one as the taskbar.
+pub fn logo_image() -> egui::ColorImage {
+    let icon = window_icon();
+    egui::ColorImage::from_rgba_unmultiplied([icon.width as usize, icon.height as usize], &icon.rgba)
+}
+
+/// Colours and spacing for both themes. Run again when the accent colour changes.
+pub fn apply_style(ctx: &egui::Context) {
     for (theme, colors) in [(egui::Theme::Dark, DARK), (egui::Theme::Light, LIGHT)] {
         ctx.style_mut_of(theme, |style| {
             let v = &mut style.visuals;
@@ -242,7 +282,7 @@ pub fn install_look(ctx: &egui::Context) {
             v.extreme_bg_color = colors.field;
             v.override_text_color = Some(colors.text);
             v.selection.bg_fill = colors.chosen;
-            v.selection.stroke = Stroke::new(1.0, TEAL);
+            v.selection.stroke = Stroke::new(1.0, teal());
             v.hyperlink_color = SKY;
             for w in [
                 &mut v.widgets.noninteractive,
@@ -258,7 +298,7 @@ pub fn install_look(ctx: &egui::Context) {
             v.widgets.hovered.weak_bg_fill = colors.hover;
             v.widgets.hovered.bg_fill = colors.hover;
             v.widgets.active.weak_bg_fill = colors.chosen;
-            v.widgets.active.bg_fill = TEAL;
+            v.widgets.active.bg_fill = teal();
             v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, colors.line);
             style.spacing.item_spacing = Vec2::new(8.0, 6.0);
             style.spacing.button_padding = Vec2::new(12.0, 5.0);
@@ -299,7 +339,7 @@ pub fn heading(ui: &mut egui::Ui, text: &str) {
 }
 
 pub fn primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
-    let fill = if enabled { TEAL } else { pal().faint };
+    let fill = if enabled { teal() } else { pal().faint };
     let button = egui::Button::new(RichText::new(text).color(Color32::WHITE).font(bold(14.0)))
         .fill(fill)
         .corner_radius(CornerRadius::same(8))
@@ -339,7 +379,7 @@ pub fn progress_bar(ui: &mut egui::Ui, percent: u32) {
     ui.painter().rect_filled(rect, 2.5, pal().line);
     let mut part = rect;
     part.set_width(rect.width() * percent.min(100) as f32 / 100.0);
-    ui.painter().rect_filled(part, 2.5, TEAL);
+    ui.painter().rect_filled(part, 2.5, teal());
 }
 
 pub fn toggle(ui: &mut egui::Ui, on: &mut bool) -> bool {
@@ -350,7 +390,7 @@ pub fn toggle(ui: &mut egui::Ui, on: &mut bool) -> bool {
         changed = true;
     }
     let t = ui.ctx().animate_bool(response.id, *on);
-    ui.painter().rect_filled(rect, 11.0, if *on { TEAL } else { pal().faint });
+    ui.painter().rect_filled(rect, 11.0, if *on { teal() } else { pal().faint });
     let x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);
     ui.painter().circle_filled(Pos2::new(x, rect.center().y), 8.0, Color32::WHITE);
     response.on_hover_cursor(egui::CursorIcon::PointingHand);

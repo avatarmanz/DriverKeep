@@ -138,6 +138,8 @@ pub enum Event {
     SoftwareDone(Result<Vec<Update>, String>),
     Status { percent: u32, text: String },
     Item { id: String, state: ItemState },
+    /// How far along the current download or install of one item is.
+    ItemProgress { id: String, percent: u32 },
     Note(String),
     InstallFinished { restart: bool, installed: usize, failed: usize },
 }
@@ -413,7 +415,11 @@ fn windows_update_install(
     session: &IUpdateSession,
     update: &IUpdate,
     note: &impl Fn(ItemState),
+    progress: &impl Fn(u32),
 ) -> Result<bool, String> {
+    use windows::Win32::System::Variant::VARIANT;
+    let none = None::<&windows::core::IUnknown>;
+    let wait = std::time::Duration::from_millis(300);
     unsafe {
         let list = single(update).map_err(|e| e.to_string())?;
         if !update.EulaAccepted().map(|v| v.as_bool()).unwrap_or(true) {
@@ -421,18 +427,39 @@ fn windows_update_install(
         }
         if !update.IsDownloaded().map(|v| v.as_bool()).unwrap_or(false) {
             note(ItemState::Downloading);
+            progress(0);
             let downloader = session.CreateUpdateDownloader().map_err(|e| e.to_string())?;
             downloader.SetUpdates(&list).map_err(|e| e.to_string())?;
-            let result = downloader.Download().map_err(|e| format!("Download failed ({e})"))?;
+            // Started without callbacks, then asked how far along it is until it's done.
+            let job = downloader
+                .BeginDownload(none, none, &VARIANT::default())
+                .map_err(|e| format!("Download failed ({e})"))?;
+            while !job.IsCompleted().map(|v| v.as_bool()).unwrap_or(true) {
+                if let Ok(done) = job.GetProgress().and_then(|p| p.PercentComplete()) {
+                    progress(done.clamp(0, 100) as u32);
+                }
+                std::thread::sleep(wait);
+            }
+            let result = downloader.EndDownload(&job).map_err(|e| format!("Download failed ({e})"))?;
             let code = result.ResultCode().map_err(|e| e.to_string())?;
             if code != orcSucceeded && code != orcSucceededWithErrors {
                 return Err(format!("Download failed (code {})", code.0));
             }
         }
         note(ItemState::Installing);
+        progress(0);
         let installer = session.CreateUpdateInstaller().map_err(|e| e.to_string())?;
         installer.SetUpdates(&list).map_err(|e| e.to_string())?;
-        let result = installer.Install().map_err(|e| format!("Install failed ({e})"))?;
+        let job = installer
+            .BeginInstall(none, none, &VARIANT::default())
+            .map_err(|e| format!("Install failed ({e})"))?;
+        while !job.IsCompleted().map(|v| v.as_bool()).unwrap_or(true) {
+            if let Ok(done) = job.GetProgress().and_then(|p| p.PercentComplete()) {
+                progress(done.clamp(0, 100) as u32);
+            }
+            std::thread::sleep(wait);
+        }
+        let result = installer.EndInstall(&job).map_err(|e| format!("Install failed ({e})"))?;
         let code = result.ResultCode().map_err(|e| e.to_string())?;
         if code != orcSucceeded && code != orcSucceededWithErrors {
             let detail = result.HResult().unwrap_or(0);
@@ -486,6 +513,10 @@ fn install(
             let _ = events.send(Event::Item { id: id.clone(), state });
             wake();
         };
+        let progress = |percent: u32| {
+            let _ = events.send(Event::ItemProgress { id: id.clone(), percent });
+            wake();
+        };
         status(5 + (position as u32) * 95 / count, update.title.clone());
 
         // A device whose own add-on driver can't be saved is left alone.
@@ -517,7 +548,7 @@ fn install(
 
         let result = match update.source {
             Source::WindowsUpdate => match found.and_then(|(s, u)| Some((s, find_update(u, &id)?))) {
-                Some((session, chosen)) => windows_update_install(session, &chosen, &note),
+                Some((session, chosen)) => windows_update_install(session, &chosen, &note, &progress),
                 None => Err("Windows Update no longer offers this driver.".to_string()),
             },
             Source::Catalog => {

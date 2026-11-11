@@ -492,6 +492,7 @@ pub fn restore_point_day() -> String {
 #[serde(default)]
 pub struct Settings {
     pub theme: Theme,
+    pub accent: [u8; 3],
     pub run_on_startup: bool,
     pub start_hidden: bool,
     pub close_choice: CloseChoice,
@@ -541,6 +542,7 @@ impl Default for Settings {
         let now = chrono::Local::now();
         Self {
             theme: Theme::System,
+            accent: [0x2A, 0xAE, 0x9B],
             run_on_startup: false,
             start_hidden: true,
             close_choice: CloseChoice::Ask,

@@ -3,7 +3,7 @@
 use super::look::*;
 use super::{App, Ask, Busy, Page, Row, Show};
 use crate::devices::{Device, OTHER_DEVICES_CLASS};
-use crate::wu::{ItemState, Kind};
+use crate::wu::{ItemState, Kind, Source};
 use egui::{Align, Align2, FontId, Frame, Layout, Margin, RichText, Sense, Stroke, Vec2};
 use std::collections::HashSet;
 
@@ -21,6 +21,11 @@ struct Clicks {
     ignore: Option<String>,
     fold: Option<Kind>,
     all: Option<(Kind, bool)>,
+}
+
+/// A newer DriverKeep itself, shown in its own section rather than with the software.
+fn is_app(row: &Row) -> bool {
+    row.update.source == Source::GitHub
 }
 
 fn can_install(row: &Row) -> bool {
@@ -45,23 +50,27 @@ fn row_detail(row: &Row, list: &[&Device]) -> String {
                 .find_map(|d| d.driver.as_ref())
                 .map(|d| d.version.clone())
                 .unwrap_or_else(|| "none".into());
-            format!("{current}  →  {target}   {}{size}", update.source.label())
+            format!("{current}  â†’  {target}   {}{size}", update.source.label())
         }
         Kind::Windows => format!("{}{size}", update.source.label()),
-        Kind::Software => format!("{}  →  {target}   {}", update.current, update.source.label()),
+        Kind::Software => format!("{}  â†’  {target}   {}", update.current, update.source.label()),
     }
 }
 
-fn state_pill(row: &Row) -> Option<(&'static str, egui::Color32)> {
+fn state_pill(row: &Row) -> Option<(String, egui::Color32)> {
+    let with_percent = |word: &str| match row.percent {
+        Some(p) => format!("{word} {p}%"),
+        None => word.to_string(),
+    };
     Some(match &row.state {
         ItemState::Waiting => return None,
-        ItemState::SavingBackup => ("Saving backup", SKY),
-        ItemState::Downloading => ("Downloading", SKY),
-        ItemState::Installing => ("Installing", SKY),
-        ItemState::Installed => ("Installed", SUCCESS),
-        ItemState::NeedsRestart => ("Restart to finish", CAUTION),
-        ItemState::Skipped(_) => ("Skipped", CAUTION),
-        ItemState::Failed(_) => ("Failed", CRITICAL),
+        ItemState::SavingBackup => ("Saving backup".into(), SKY),
+        ItemState::Downloading => (with_percent("Downloading"), SKY),
+        ItemState::Installing => (with_percent("Installing"), SKY),
+        ItemState::Installed => ("Installed".into(), SUCCESS),
+        ItemState::NeedsRestart => ("Restart to finish".into(), CAUTION),
+        ItemState::Skipped(_) => ("Skipped".into(), CAUTION),
+        ItemState::Failed(_) => ("Failed".into(), CRITICAL),
     })
 }
 
@@ -69,8 +78,10 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
     let list: Vec<&Device> =
         devices.iter().filter(|d| row.update.devices.contains(&d.instance_id)).collect();
     Frame::new().inner_margin(Margin::symmetric(8, 5)).show(ui, |ui| {
+        let mut text_left = ui.cursor().left();
         ui.horizontal(|ui| {
             ui.add_enabled(!installing, egui::Checkbox::without_text(&mut row.selected));
+            text_left = ui.cursor().left();
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.horizontal(|ui| {
@@ -85,7 +96,7 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                 ui.label(small(row_detail(row, &list)));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.menu_button("···", |ui| {
+                ui.menu_button("Â·Â·Â·", |ui| {
                     let retry = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
                     if retry && ui.add_enabled(!installing, egui::Button::new("Try again")).clicked() {
                         clicks.install = Some(vec![row.update.id.clone()]);
@@ -102,7 +113,7 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                     }
                 });
                 match state_pill(row) {
-                    Some((text, color)) => pill(ui, text, color),
+                    Some((text, color)) => pill(ui, &text, color),
                     None => {
                         if secondary(ui, "Update", !installing) {
                             clicks.install = Some(vec![row.update.id.clone()]);
@@ -111,8 +122,16 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                 }
             });
         });
+        if let (ItemState::Downloading | ItemState::Installing, Some(percent)) = (&row.state, row.percent) {
+            ui.add_space(2.0);
+            progress_bar(ui, percent);
+        }
         if let ItemState::Failed(why) | ItemState::Skipped(why) = &row.state {
-            ui.label(RichText::new(why.clone()).size(12.0).color(CAUTION));
+            // Lined up under the update's name, not under the checkbox.
+            ui.horizontal(|ui| {
+                ui.add_space((text_left - ui.cursor().left()).max(0.0));
+                ui.add(egui::Label::new(RichText::new(why.clone()).size(12.0).color(CAUTION)).wrap());
+            });
         }
     });
 }
@@ -140,7 +159,7 @@ impl App {
         for step in 0..track {
             let a = step as f32 / track as f32;
             let b = (step + 1) as f32 / track as f32;
-            let color = if a < filled { lerp_color(BLUE, TEAL, a) } else { p.line };
+            let color = if a < filled { lerp_color(BLUE, teal(), a) } else { p.line };
             painter.line_segment([at(a, radius), at(b, radius)], Stroke::new(7.0, color));
         }
         if scanning {
@@ -171,6 +190,37 @@ impl App {
         response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
     }
 
+    /// The section at the very top when a newer DriverKeep exists. Its colour pulses gently.
+    fn app_update_banner(&mut self, ui: &mut egui::Ui, clicks: &mut Clicks) {
+        let Some(row) = self.rows.iter().find(|r| is_app(r)) else { return };
+        let busy = self.busy != Busy::Idle;
+        let pulse = 0.5 + 0.5 * (ui.input(|i| i.time) as f32 * 3.0).sin();
+        let waiting = can_install(row);
+        let text = format!("DriverKeep {} is available (you have {}).", row.update.version, row.update.current);
+        let id = row.update.id.clone();
+        let pill_state = state_pill(row);
+        card().fill(BLUE.gamma_multiply(0.14 + 0.16 * pulse)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("DriverKeep update").font(bold(14.0)));
+            ui.horizontal(|ui| {
+                ui.add(egui::Label::new(text).wrap());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| match pill_state {
+                    Some((label, color)) if !waiting => pill(ui, &label, color),
+                    _ => {
+                        if primary(ui, "Update DriverKeep", !busy) {
+                            clicks.install = Some(vec![id.clone()]);
+                        }
+                    }
+                });
+            });
+            if let ItemState::Failed(why) | ItemState::Skipped(why) = &row.state {
+                ui.label(RichText::new(why.clone()).size(12.0).color(CAUTION));
+            }
+        });
+        ui.add_space(8.0);
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+    }
+
     fn group_shown(&self, kind: Kind) -> bool {
         match kind {
             Kind::Driver => self.settings.scan_drivers,
@@ -188,14 +238,14 @@ impl App {
     ) {
         let installing = self.busy == Busy::Installing;
         let idle = self.busy == Busy::Idle;
-        let count = self.rows.iter().filter(|r| r.update.kind == kind).count();
+        let count = self.rows.iter().filter(|r| r.update.kind == kind && !is_app(r)).count();
         let open: Vec<String> = self
             .rows
             .iter()
-            .filter(|r| r.update.kind == kind && r.selected && can_install(r))
+            .filter(|r| r.update.kind == kind && !is_app(r) && r.selected && can_install(r))
             .map(|r| r.update.id.clone())
             .collect();
-        let selected = self.rows.iter().filter(|r| r.update.kind == kind && r.selected).count();
+        let selected = self.rows.iter().filter(|r| r.update.kind == kind && !is_app(r) && r.selected).count();
         let folded = self.collapsed.contains(&kind);
         card().inner_margin(Margin::symmetric(6, 6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -225,7 +275,7 @@ impl App {
                 });
             });
             if !folded {
-                for row in self.rows.iter_mut().filter(|r| r.update.kind == kind) {
+                for row in self.rows.iter_mut().filter(|r| r.update.kind == kind && !is_app(r)) {
                     draw_row(ui, row, devices, installing, clicks);
                 }
             }
@@ -243,7 +293,7 @@ impl App {
                     self.stop_scan();
                 }
                 ui.add_space(14.0);
-                ui.label(RichText::new("Scanning…").font(bold(17.0)));
+                ui.label(RichText::new("Scanningâ€¦").font(bold(17.0)));
                 soft(ui, self.status.clone());
             });
             ui.ctx().request_repaint();
@@ -268,7 +318,7 @@ impl App {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if self.windows_update_pending {
-                        ui.add(egui::Spinner::new().size(12.0).color(TEAL));
+                        ui.add(egui::Spinner::new().size(12.0).color(teal()));
                         ui.label(small("Still checking Windows Update"));
                     } else {
                         let last = self.settings.last_scan.map(ago).unwrap_or_default();
@@ -303,6 +353,7 @@ impl App {
         let devices = std::mem::take(&mut self.devices);
         let mut clicks = Clicks::default();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            self.app_update_banner(ui, &mut clicks);
             for group in GROUPS {
                 if self.group_shown(group.0) {
                     self.group_card(ui, group, &devices, &mut clicks);
@@ -326,7 +377,7 @@ impl App {
             }
         }
         if let Some((kind, on)) = clicks.all {
-            for row in self.rows.iter_mut().filter(|r| r.update.kind == kind) {
+            for row in self.rows.iter_mut().filter(|r| r.update.kind == kind && !is_app(r)) {
                 row.selected = on;
             }
         }

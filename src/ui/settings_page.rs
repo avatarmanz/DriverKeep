@@ -5,13 +5,14 @@ use super::look::*;
 use super::{App, Ask};
 use crate::system::{self, CloseChoice, Frequency, Settings, Theme};
 use chrono::Datelike;
-use egui::{Color32, RichText, Vec2};
+use egui::{Color32, RichText, Sense, Stroke, Vec2};
 
 const DAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum SettingsTab {
     General,
+    Customization,
     Scanning,
     Installing,
     Backup,
@@ -19,8 +20,9 @@ pub(super) enum SettingsTab {
 }
 
 impl SettingsTab {
-    const ALL: [(SettingsTab, &'static str); 5] = [
+    const ALL: [(SettingsTab, &'static str); 6] = [
         (SettingsTab::General, "General"),
+        (SettingsTab::Customization, "Customization"),
         (SettingsTab::Scanning, "Scanning"),
         (SettingsTab::Installing, "Installing"),
         (SettingsTab::Backup, "Backup"),
@@ -30,6 +32,7 @@ impl SettingsTab {
     /// The `--page` value used by screenshot tests: settings, settings-scanning, about...
     pub(super) fn from_page(page: Option<&str>) -> Self {
         match page {
+            Some("settings-customization") => Self::Customization,
             Some("settings-scanning") => Self::Scanning,
             Some("settings-installing") => Self::Installing,
             Some("settings-backup") => Self::Backup,
@@ -40,7 +43,7 @@ impl SettingsTab {
 }
 
 fn tab_button(ui: &mut egui::Ui, text: &str, selected: bool) -> bool {
-    let (fill, color) = if selected { (TEAL, Color32::WHITE) } else { (pal().hover, pal().soft) };
+    let (fill, color) = if selected { (teal(), Color32::WHITE) } else { (pal().hover, pal().soft) };
     let button = egui::Button::new(RichText::new(text).font(bold(13.5)).color(color))
         .fill(fill)
         .corner_radius(egui::CornerRadius::same(8))
@@ -66,6 +69,7 @@ impl App {
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             match tab {
                 SettingsTab::General => self.general_tab(ui, &mut changed, &mut startup_changed),
+                SettingsTab::Customization => self.customization_tab(ui, &mut changed),
                 SettingsTab::Scanning => self.scanning_tab(ui, &mut changed, &mut startup_changed),
                 SettingsTab::Installing => self.installing_tab(ui, &mut changed),
                 SettingsTab::Backup => self.backup_tab(ui, &mut changed),
@@ -82,13 +86,6 @@ impl App {
 
     fn general_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool, startup_changed: &mut bool) {
         let s = &mut self.settings;
-        group_title(ui, "Appearance");
-        setting(ui, ICON_THEME, "Theme", "Light, dark, or match Windows.", |ui| {
-            for (theme, label) in [(Theme::System, "System"), (Theme::Light, "Light"), (Theme::Dark, "Dark")] {
-                *changed |= ui.selectable_value(&mut s.theme, theme, label).changed();
-            }
-        });
-
         group_title(ui, "Startup");
         setting(ui, ICON_POWER, "Run when Windows starts", "Starts with your computer.", |ui| {
             *startup_changed |= toggle(ui, &mut s.run_on_startup);
@@ -133,6 +130,60 @@ impl App {
         }
     }
 
+    fn customization_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool) {
+        let s = &mut self.settings;
+        group_title(ui, "Theme");
+        setting(ui, ICON_THEME, "Light or dark", "Pick one, or match Windows.", |ui| {
+            // This row is laid out right to left, so the list is backwards to read System, Light, Dark.
+            for (theme, label) in [(Theme::Dark, "Dark"), (Theme::Light, "Light"), (Theme::System, "System")] {
+                *changed |= ui.selectable_value(&mut s.theme, theme, label).changed();
+            }
+        });
+
+        group_title(ui, "Accent color");
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(small("Used for buttons, progress, switches and highlights."));
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                for (name, rgb) in ACCENTS {
+                    let (rect, response) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+                    ui.painter().circle_filled(rect.center(), 13.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+                    if s.accent == rgb {
+                        ui.painter().circle_stroke(rect.center(), 15.5, Stroke::new(2.0, pal().text));
+                    }
+                    if response.on_hover_text(name).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        s.accent = rgb;
+                        *changed = true;
+                    }
+                }
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label("Your own color");
+                *changed |= ui.color_edit_button_srgb(&mut s.accent).changed();
+                if secondary(ui, "Back to teal", s.accent != DEFAULT_ACCENT) {
+                    s.accent = DEFAULT_ACCENT;
+                    *changed = true;
+                }
+            });
+        });
+
+        group_title(ui, "Preview");
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                primary(ui, "Update Everything", true);
+                secondary(ui, "Scan Again", true);
+                let mut on = true;
+                toggle(ui, &mut on);
+            });
+            ui.add_space(8.0);
+            progress_bar(ui, 60);
+        });
+    }
+
     fn scanning_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool, startup_changed: &mut bool) {
         let s = &mut self.settings;
         group_title(ui, "What to check");
@@ -158,7 +209,7 @@ impl App {
         let mut get_chocolatey = false;
         let mut open_store = false;
         let free = !self.tools_installing;
-        let install_text = if free { "Install" } else { "Installing…" };
+        let install_text = if free { "Install" } else { "Installingâ€¦" };
         setting(ui, ICON_SETTINGS, "Windows Package Manager", "Finds updates for the programs already on your PC.", |ui| {
             if winget_ready {
                 *changed |= toggle(ui, &mut s.use_winget);

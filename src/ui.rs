@@ -24,6 +24,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+/// The widest the page content gets, in points. Wider windows get empty sides.
+const MAX_CONTENT_WIDTH: f32 = 1000.0;
+
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Drivers,
@@ -65,6 +68,8 @@ struct Row {
     update: Update,
     selected: bool,
     state: ItemState,
+    /// Download or install progress, when the source reports it.
+    percent: Option<u32>,
 }
 
 enum Ask {
@@ -98,6 +103,7 @@ pub struct App {
     catalog_pending: bool,
     windows_update_pending: bool,
     software_pending: bool,
+    flash_app_update: bool,
     discard: u32,
     notes: Vec<String>,
     show_uptodate: bool,
@@ -131,6 +137,7 @@ pub struct App {
     engine: wu::Engine,
     events: Receiver<Event>,
 
+    logo: egui::TextureHandle,
     spin: f32,
     frames: u32,
     shot_sent: bool,
@@ -170,6 +177,7 @@ impl App {
             catalog_pending: false,
             windows_update_pending: false,
             software_pending: false,
+            flash_app_update: false,
             discard: 0,
             notes: Vec::new(),
             show_uptodate: false,
@@ -199,6 +207,7 @@ impl App {
             rx,
             engine,
             events,
+            logo: cc.egui_ctx.load_texture("logo", logo_image(), egui::TextureOptions::LINEAR),
             spin: 0.0,
             frames: 0,
             shot_sent: false,
@@ -263,6 +272,10 @@ impl App {
     }
 
     fn start_scan(&mut self) {
+        // Searching while something installs (or another search runs) breaks both.
+        if self.busy != Busy::Idle {
+            return;
+        }
         self.busy = Busy::Scanning;
         self.percent = 2;
         self.status = "Looking through your hardware".into();
@@ -306,6 +319,7 @@ impl App {
                 Row {
                     selected: before.map(|r| r.selected).unwrap_or(self.picked_by_default(update.kind)),
                     state: before.map(|r| r.state.clone()).unwrap_or(ItemState::Waiting),
+                    percent: before.and_then(|r| r.percent),
                     update,
                 }
             })
@@ -325,18 +339,18 @@ impl App {
             system::write_cache(SCAN_CACHE, &updates);
             self.take_resume(ctx);
             let own = self.rows.iter().find(|r| r.update.source == Source::GitHub).map(|r| r.update.id.clone());
-            if let Some(id) = own.filter(|_| self.settings.auto_update_app && system::is_installed()) {
-                if self.busy == Busy::Idle {
-                    self.run_update(vec![id], false);
+            if let Some(id) = own {
+                if self.settings.auto_update_app && system::is_installed() {
+                    if self.busy == Busy::Idle {
+                        self.run_update(vec![id], false);
+                    }
+                } else {
+                    // A new DriverKeep can't be missed: the taskbar button flashes once.
+                    self.flash_app_update = true;
                 }
             }
-        } else if !self.catalog_pending && !self.software_pending && !self.rows.is_empty() {
-            // Results are worth showing while Windows Update finishes.
-            self.searched = true;
-            if self.busy == Busy::Scanning {
-                self.busy = Busy::Idle;
-            }
         }
+        // Nothing is shown until every part of the search has finished.
     }
 
     fn counts(&self) -> (usize, usize, usize) {
@@ -551,6 +565,12 @@ impl App {
                 Event::Item { id, state } => {
                     if let Some(row) = self.rows.iter_mut().find(|r| r.update.id == id) {
                         row.state = state;
+                        row.percent = None;
+                    }
+                }
+                Event::ItemProgress { id, percent } => {
+                    if let Some(row) = self.rows.iter_mut().find(|r| r.update.id == id) {
+                        row.percent = Some(percent);
                     }
                 }
                 Event::Note(text) => self.notes.push(text),
@@ -600,6 +620,9 @@ impl App {
     }
 
     fn run_update(&mut self, ids: Vec<String>, skip_backup: bool) {
+        if self.busy != Busy::Idle {
+            return;
+        }
         self.notes.clear();
         self.busy = Busy::Installing;
         self.percent = 1;
@@ -711,12 +734,8 @@ impl App {
     fn rail(&mut self, ui: &mut egui::Ui) {
         ui.add_space(14.0);
         ui.vertical_centered(|ui| {
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::hover());
-            let painter = ui.painter();
-            painter.rect_filled(rect, 9.0, BLUE);
-            let half = egui::Rect::from_min_max(rect.center_top(), rect.right_bottom());
-            painter.rect_filled(half, egui::CornerRadius { ne: 9, se: 9, nw: 0, sw: 0 }, TEAL);
-            painter.text(rect.center(), Align2::CENTER_CENTER, ICON_CHECK, icon_font(17.0), Color32::WHITE);
+            // The same picture as the taskbar and title bar icon.
+            ui.add(egui::Image::new(&self.logo).fit_to_exact_size(Vec2::splat(34.0)));
         });
         ui.add_space(16.0);
         let badge = self.open_rows();
@@ -744,7 +763,7 @@ impl App {
             Align2::CENTER_CENTER,
             glyph,
             icon_font(19.0),
-            if chosen { TEAL } else { p.soft },
+            if chosen { teal() } else { p.soft },
         );
         ui.painter().text(
             inner.center() + Vec2::new(0.0, 13.0),
@@ -807,7 +826,7 @@ impl App {
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new().size(15.0).color(TEAL));
+                ui.add(egui::Spinner::new().size(15.0).color(teal()));
                 ui.add(egui::Label::new(self.status.clone()).truncate());
             });
             ui.add_space(2.0);
@@ -1145,6 +1164,9 @@ impl App {
             Some("light") => Theme::Light,
             _ => self.settings.theme,
         };
+        if set_accent(self.settings.accent) {
+            apply_style(ctx);
+        }
         ctx.set_theme(match choice {
             Theme::Dark => egui::ThemePreference::Dark,
             Theme::Light => egui::ThemePreference::Light,
@@ -1161,6 +1183,11 @@ impl eframe::App for App {
         self.handle_close(&ctx);
         self.receive(&ctx);
         self.screenshot_step(&ctx);
+        if std::mem::take(&mut self.flash_app_update) && self.options.screenshot.is_none() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Critical,
+            ));
+        }
         if self.busy != Busy::Idle || self.windows_update_pending {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
@@ -1175,13 +1202,24 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(pal().bg).inner_margin(Margin::symmetric(24, 16)))
             .show(ui, |ui| {
-                self.banners(ui);
-                match self.page {
-                    Page::Drivers => self.drivers_page(ui),
-                    Page::System => self.system_page(ui),
-                    Page::Backups => self.backups_page(ui),
-                    Page::Settings => self.settings_page(ui),
-                }
+                // On a wide screen the content stays in a centred column, so names and
+                // their buttons are close enough to read across.
+                let full = ui.max_rect();
+                let width = full.width().min(MAX_CONTENT_WIDTH);
+                let left = full.center().x - width / 2.0;
+                let column = egui::Rect::from_min_max(
+                    egui::pos2(left, full.top()),
+                    egui::pos2(left + width, full.bottom()),
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(column), |ui| {
+                    self.banners(ui);
+                    match self.page {
+                        Page::Drivers => self.drivers_page(ui),
+                        Page::System => self.system_page(ui),
+                        Page::Backups => self.backups_page(ui),
+                        Page::Settings => self.settings_page(ui),
+                    }
+                });
             });
 
         self.dialogs(&ctx);
