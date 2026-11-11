@@ -506,11 +506,6 @@ pub fn monthly_day(today: u32) -> u32 {
     if today <= 27 { today } else { 1 }
 }
 
-/// The original compares its daily restore point in UTC days.
-pub fn restore_point_day() -> String {
-    chrono::Utc::now().format("%Y%m%d").to_string()
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -554,6 +549,12 @@ pub struct Settings {
     pub restart_only_in_hours: bool,
     pub use_catalog: bool,
     pub make_restore_point: bool,
+    /// Which kinds of update get a restore point first (when make_restore_point is on).
+    pub restore_drivers: bool,
+    pub restore_windows: bool,
+    pub restore_software: bool,
+    /// Unix time of the last restore point DriverKeep made, so a run of updates shares one.
+    pub last_restore_point_at: i64,
     pub backup_before_update: bool,
     pub backup_folder: PathBuf,
     /// Backups older than this many days are deleted. 0 keeps them all. New and existing users start at a year.
@@ -608,6 +609,10 @@ impl Default for Settings {
             restart_only_in_hours: true,
             use_catalog: true,
             make_restore_point: true,
+            restore_drivers: true,
+            restore_windows: true,
+            restore_software: true,
+            last_restore_point_at: 0,
             backup_before_update: true,
             backup_folder: default_backup_folder(),
             backup_keep_days: 365,
@@ -662,6 +667,26 @@ impl Settings {
             settings.backup_folder = default_backup_folder();
         }
         settings
+    }
+
+    /// Whether to make a Windows restore point before installing these updates, each given as its kind
+    /// and whether it is DriverKeep's own update (which never needs one). One restore point covers
+    /// everything installed within the next hour, so a run of updates doesn't make a pile of them.
+    pub fn wants_restore_point(&self, updates: &[(crate::wu::Kind, bool)]) -> bool {
+        use crate::wu::Kind;
+        if !self.make_restore_point {
+            return false;
+        }
+        let recent = chrono::Local::now().timestamp() - self.last_restore_point_at < 3600;
+        !recent
+            && updates.iter().any(|(kind, own_app)| {
+                !own_app
+                    && match kind {
+                        Kind::Driver => self.restore_drivers,
+                        Kind::Windows => self.restore_windows,
+                        Kind::Software => self.restore_software,
+                    }
+            })
     }
 
     /// True when a scheduled scan's moment has passed since the last scan.
@@ -777,5 +802,35 @@ mod tests {
         assert!(xml.contains("PT0S"));
         assert!(xml.contains("HighestAvailable"));
         assert!(xml.contains("<DisallowStartIfOnBatteries>false"));
+    }
+}
+
+#[cfg(test)]
+mod restore_point_rule_tests {
+    use super::*;
+    use crate::wu::Kind;
+
+    #[test]
+    fn a_restore_point_is_made_for_each_kind_that_is_switched_on() {
+        let mut s = Settings::default();
+        assert!(s.wants_restore_point(&[(Kind::Driver, false)]));
+        assert!(s.wants_restore_point(&[(Kind::Windows, false)]));
+        assert!(s.wants_restore_point(&[(Kind::Software, false)]));
+        s.restore_software = false;
+        assert!(!s.wants_restore_point(&[(Kind::Software, false)]));
+        // A mixed run still gets one if any of its kinds is switched on.
+        assert!(s.wants_restore_point(&[(Kind::Software, false), (Kind::Driver, false)]));
+    }
+
+    #[test]
+    fn none_for_the_apps_own_update_when_off_or_when_one_was_just_made() {
+        let mut s = Settings::default();
+        assert!(!s.wants_restore_point(&[(Kind::Software, true)]));
+        s.last_restore_point_at = chrono::Local::now().timestamp() - 60;
+        assert!(!s.wants_restore_point(&[(Kind::Driver, false)]));
+        s.last_restore_point_at = chrono::Local::now().timestamp() - 2 * 3600;
+        assert!(s.wants_restore_point(&[(Kind::Driver, false)]));
+        s.make_restore_point = false;
+        assert!(!s.wants_restore_point(&[(Kind::Driver, false)]));
     }
 }

@@ -256,10 +256,10 @@ fn scan_and_maybe_install(
     if items.is_empty() {
         return false;
     }
-    let today = system::restore_point_day();
-    let restore_point = settings.make_restore_point && settings.last_restore_point_day != today;
+    let kinds: Vec<(Kind, bool)> = items.iter().map(|i| (i.update.kind, i.update.source == Source::GitHub)).collect();
+    let restore_point = settings.wants_restore_point(&kinds);
     if restore_point {
-        settings.last_restore_point_day = today;
+        settings.last_restore_point_at = chrono::Local::now().timestamp();
         settings.save();
     }
     let _ = engine.commands.send(Command::Install(InstallPlan {
@@ -329,10 +329,10 @@ fn install_requested(
         return false;
     }
 
-    let today = system::restore_point_day();
-    let restore_point = settings.make_restore_point && settings.last_restore_point_day != today;
+    let kinds: Vec<(Kind, bool)> = items.iter().map(|i| (i.update.kind, i.update.source == Source::GitHub)).collect();
+    let restore_point = settings.wants_restore_point(&kinds);
     if restore_point {
-        settings.last_restore_point_day = today;
+        settings.last_restore_point_at = chrono::Local::now().timestamp();
         settings.save();
     }
     engine.reset_install();

@@ -532,7 +532,7 @@ fn install(
     let mut sequence = None;
     if plan.restore_point {
         status(2, "Creating a Windows restore point".into());
-        let note = match system::begin_restore_point("Before installing driver updates") {
+        let note = match system::begin_restore_point("Before installing updates") {
             RestorePoint::Created(number) => {
                 sequence = Some(number);
                 "Windows restore point created.".to_string()

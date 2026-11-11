@@ -527,9 +527,20 @@ impl App {
         setting(ui, ICON_BACKUP, "Back up the current driver", "Saves it so you can put it back.", |ui| {
             *changed |= toggle(ui, &mut s.backup_before_update);
         });
-        setting(ui, ICON_SHIELD, "Create a Windows restore point", "Made once a day before driver updates.", |ui| {
+        setting(ui, ICON_SHIELD, "Create a Windows restore point", "Made before updates start, at most once an hour. Pick which kinds below.", |ui| {
             *changed |= toggle(ui, &mut s.make_restore_point);
         });
+        if s.make_restore_point || searching_settings() {
+            setting(ui, ICON_SHIELD, "Restore point before driver updates", "Windows' System Restore, not a driver backup.", |ui| {
+                *changed |= toggle(ui, &mut s.restore_drivers);
+            });
+            setting(ui, ICON_SHIELD, "Restore point before Windows updates", "Made before Windows updates are installed.", |ui| {
+                *changed |= toggle(ui, &mut s.restore_windows);
+            });
+            setting(ui, ICON_SHIELD, "Restore point before software updates", "Made before programs are updated.", |ui| {
+                *changed |= toggle(ui, &mut s.restore_software);
+            });
+        }
         let detail = "If a backup fails, the driver installs anyway and can't be put back.";
         setting(ui, ICON_BACKUP, "Install even if a backup can't be made", detail, |ui| {
             *changed |= toggle(ui, &mut s.install_without_backup);
@@ -730,7 +741,10 @@ const INDEX: &[(SettingsTab, &str, &str, &str)] = &[
     (SettingsTab::Installing, "Restart automatically", "If a driver needs it. You get a 5 minute warning.", "reboot"),
     (SettingsTab::Installing, "Restart only during those hours", "Otherwise it restarts right after installing.", "reboot time window"),
     (SettingsTab::Backup, "Back up the current driver", "Saves it so you can put it back.", "before updating save copy"),
-    (SettingsTab::Backup, "Create a Windows restore point", "Made once a day before driver updates.", "system restore safety"),
+    (SettingsTab::Backup, "Create a Windows restore point", "Made before updates start, at most once an hour.", "system restore safety before updating"),
+    (SettingsTab::Backup, "Restore point before driver updates", "Windows' System Restore, not a driver backup.", "system restore drivers"),
+    (SettingsTab::Backup, "Restore point before Windows updates", "Made before Windows updates are installed.", "system restore windows"),
+    (SettingsTab::Backup, "Restore point before software updates", "Made before programs are updated.", "system restore software programs"),
     (SettingsTab::Backup, "Install even if a backup can't be made", "If a backup fails, the driver installs anyway.", "skip failed"),
     (SettingsTab::Backup, "Backup folder", "Where backups are saved.", "location path directory change open"),
     (SettingsTab::Backup, "Keep backups for", "Set to 0 to never delete backups.", "retention days delete old cleanup expire how long"),

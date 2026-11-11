@@ -271,7 +271,7 @@ impl App {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     for column in 0..7 {
                         let slot = week * 7 + column;
-                        let (rect, response) = ui.allocate_exact_size(Vec2::new(cell_w, 88.0), Sense::click());
+                        let (rect, response) = ui.allocate_exact_size(Vec2::new(cell_w, 112.0), Sense::click());
                         if slot < lead || slot >= lead + days_in {
                             continue;
                         }
@@ -326,7 +326,7 @@ impl App {
                                 .fold(0.0, f32::max);
                             let fits = widest + 11.0 <= inner.width() - 20.0;
                             for (row, (kind, text)) in lines.iter().enumerate() {
-                                let y = inner.top() + 40.0 + row as f32 * 17.0;
+                                let y = inner.top() + 44.0 + row as f32 * 22.0;
                                 painter.circle_filled(egui::pos2(inner.left() + 15.5, y), 3.5, kind.color());
                                 let shown = if fits { text.clone() } else { by_kind[kind.index()].to_string() };
                                 painter.text(
@@ -451,7 +451,7 @@ impl App {
         let mut open_folder = false;
         let title = ui
             .horizontal(|ui| {
-                let title = ui.label(RichText::new("Saved backups").font(bold(16.0)));
+                let title = ui.label(RichText::new("Driver Backups").font(bold(16.0)));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     open_folder = secondary(ui, "Open Backup Folder", true);
                 });

@@ -831,18 +831,16 @@ impl App {
                     .collect(),
             })
             .collect();
-        let today = system::restore_point_day();
-        // Like the original: one restore point a day is enough.
-        let only_this_app = self
+        // A Windows restore point first, for the kinds of update the person chose it for.
+        let kinds: Vec<(Kind, bool)> = self
             .rows
             .iter()
             .filter(|r| ids.contains(&r.update.id))
-            .all(|r| r.update.source == Source::GitHub);
-        let restore_point = self.settings.make_restore_point
-            && self.settings.last_restore_point_day != today
-            && !only_this_app;
+            .map(|r| (r.update.kind, r.update.source == Source::GitHub))
+            .collect();
+        let restore_point = self.settings.wants_restore_point(&kinds);
         if restore_point {
-            self.settings.last_restore_point_day = today;
+            self.settings.last_restore_point_at = chrono::Local::now().timestamp();
             self.settings.save();
         }
         let _ = self.engine.commands.send(Command::Install(InstallPlan {
