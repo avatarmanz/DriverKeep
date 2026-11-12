@@ -506,6 +506,7 @@ impl App {
     fn scan_part_done(&mut self, ctx: &egui::Context) {
         self.rebuild_rows();
         if !self.catalog_pending && !self.windows_update_pending && !self.software_pending {
+            self.upgrade_hidden();
             self.searched = true;
             self.updates_ready = true;
             if self.busy == Busy::Scanning {
@@ -1005,20 +1006,41 @@ impl App {
             }
         }
         // Remembered by name, so Settings > Hidden Updates can say what was hidden.
-        if let Some(row) = self.rows.iter().find(|r| r.update.id == id) {
-            let kind = match row.update.kind {
-                Kind::Driver => "Driver",
-                Kind::Windows => "Windows update",
-                Kind::Software => "Software",
-            };
-            let version = if row.update.version.is_empty() { String::new() } else { format!(" · {}", row.update.version) };
-            self.settings.ignored_names.insert(id.clone(), (row.update.title.clone(), format!("{kind}{version}")));
-        }
-        if !self.settings.ignored.contains(&id) {
-            self.settings.ignored.push(id);
+        // Hidden for this version only: the saved key includes the version, so a newer one shows again.
+        let key = match self.rows.iter().find(|r| r.update.id == id) {
+            Some(row) => {
+                let key = wu::hide_key(&row.update);
+                self.settings.ignored_names.insert(key.clone(), hidden_label(&row.update));
+                key
+            }
+            None => id,
+        };
+        if !self.settings.ignored.contains(&key) {
+            self.settings.ignored.push(key);
         }
         self.settings.save();
         self.rebuild_rows();
+    }
+
+    /// Hidden updates saved by an older DriverKeep have only an id. Once one is seen again in a scan it
+    /// gets the version it's on now, so from then on only that version stays hidden.
+    fn upgrade_hidden(&mut self) {
+        let mut changed = false;
+        for old in self.settings.ignored.clone() {
+            let Some(update) = self.raw.iter().find(|u| u.id == old && !u.version.is_empty()) else { continue };
+            let key = wu::hide_key(update);
+            let label = hidden_label(update);
+            if let Some(at) = self.settings.ignored.iter().position(|i| *i == old) {
+                self.settings.ignored[at] = key.clone();
+            }
+            self.settings.ignored_names.remove(&old);
+            self.settings.ignored_names.insert(key, label);
+            changed = true;
+        }
+        if changed {
+            self.settings.ignored.dedup();
+            self.settings.save();
+        }
     }
 
     /// Brings hidden updates back into the list.
@@ -1629,4 +1651,15 @@ impl eframe::App for App {
 
         self.dialogs(&ctx);
     }
+}
+
+/// How a hidden update is described in Settings: its title, then its kind and version.
+pub(crate) fn hidden_label(update: &Update) -> (String, String) {
+    let kind = match update.kind {
+        Kind::Driver => "Driver",
+        Kind::Windows => "Windows update",
+        Kind::Software => "Software",
+    };
+    let version = if update.version.is_empty() { String::new() } else { format!(" · {}", update.version) };
+    (update.title.clone(), format!("{kind}{version}"))
 }

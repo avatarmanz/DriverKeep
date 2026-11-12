@@ -187,9 +187,26 @@ pub fn start(events: Sender<Event>, wake: impl Fn() + Send + Sync + Clone + 'sta
     Engine { commands, stop, skip }
 }
 
-/// Everything found, one best update per device, ignored ones left out.
+/// What's saved when an update is hidden: its id and the version being offered, so a newer version
+/// of the same thing is shown again. An update with no version is saved by id alone.
+pub fn hide_key(update: &Update) -> String {
+    if update.version.is_empty() {
+        update.id.clone()
+    } else {
+        format!("{}@{}", update.id, update.version)
+    }
+}
+
+/// True when this update, at this version, was hidden. A plain id saved by an older DriverKeep
+/// matches any version until it's first seen again and given a version.
+pub fn is_hidden(update: &Update, hidden: &[String]) -> bool {
+    let key = hide_key(update);
+    hidden.iter().any(|h| *h == key || *h == update.id)
+}
+
+/// Everything found, one best update per device, hidden ones left out.
 pub fn merge(mut lists: Vec<Update>, ignored: &[String]) -> Vec<Update> {
-    lists.retain(|u| !ignored.contains(&u.id));
+    lists.retain(|u| !is_hidden(u, ignored));
     // Windows Update first, then newest version: the first offer for a device wins.
     lists.sort_by(|a, b| {
         let rank = |u: &Update| u.source != Source::WindowsUpdate;
@@ -710,6 +727,19 @@ mod tests {
 
     #[test]
     fn ignored_updates_stay_hidden() {
+        let merged = merge(vec![offer("w", Source::WindowsUpdate, "1.2", &["a"])], &["w@1.2".to_string()]);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn a_newer_version_of_a_hidden_update_is_shown_again() {
+        let hidden = vec!["w@1.2".to_string()];
+        assert!(merge(vec![offer("w", Source::WindowsUpdate, "1.2", &["a"])], &hidden).is_empty());
+        assert_eq!(merge(vec![offer("w", Source::WindowsUpdate, "1.3", &["a"])], &hidden).len(), 1);
+    }
+
+    #[test]
+    fn a_plain_id_from_an_older_version_still_hides_it() {
         let merged = merge(vec![offer("w", Source::WindowsUpdate, "1.2", &["a"])], &["w".to_string()]);
         assert!(merged.is_empty());
     }

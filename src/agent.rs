@@ -412,7 +412,7 @@ fn update_self(engine: &wu::Engine, events: &std::sync::mpsc::Receiver<Event>, s
     let newer = saved
         .into_iter()
         .find(|u| u.source == Source::GitHub && crate::catalog::is_newer(&u.version, crate::selfupdate::CURRENT))
-        .filter(|u| !settings.ignored.contains(&u.id));
+        .filter(|u| !wu::is_hidden(u, &settings.ignored));
     let Some(update) = newer else { return };
     let _ = engine.commands.send(Command::Install(InstallPlan {
         items: vec![InstallItem { update, devices: Vec::new() }],

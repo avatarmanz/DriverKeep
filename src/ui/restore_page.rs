@@ -197,19 +197,44 @@ impl App {
             soft(ui, "There are no restore points yet.");
             return;
         }
+        let mut delete = None;
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             for point in &info.points {
                 ui.add_space(6.0);
                 ui.spacing_mut().item_spacing.y = 1.0;
-                ui.label(RichText::new(&point.description).size(13.5));
                 let when = chrono::DateTime::from_timestamp(point.created, 0)
                     .map(|t| t.with_timezone(&chrono::Local).format("%B %-d, %Y  %-I:%M %p").to_string())
                     .unwrap_or_default();
-                ui.label(small(format!("{}  ·  {when}", Info::kind_label(point.kind))));
+                // Deleting can't be undone, so the first press only asks.
+                let armed_id = ui.id().with(("delete-restore-point", point.number));
+                let armed = ui.data(|d| d.get_temp::<bool>(armed_id)).unwrap_or(false);
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.label(RichText::new(&point.description).size(13.5));
+                        ui.label(small(format!("{}  ·  {when}", Info::kind_label(point.kind))));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if armed {
+                            if cancel_button(ui, "Delete for Good", !busy) {
+                                delete = Some(point.number);
+                                ui.data_mut(|d| d.insert_temp(armed_id, false));
+                            }
+                            if secondary(ui, "Keep", true) {
+                                ui.data_mut(|d| d.insert_temp(armed_id, false));
+                            }
+                        } else if secondary(ui, "Delete", !busy) {
+                            ui.data_mut(|d| d.insert_temp(armed_id, true));
+                        }
+                    });
+                });
             }
             ui.add_space(6.0);
         });
+        if let Some(number) = delete {
+            self.ask_restore(Action::Delete(number), "Deleting the restore point");
+        }
         ui.add_space(6.0);
         ui.label(small("To go back to one of these, press Open Windows System Restore."));
         ui.add_space(8.0);

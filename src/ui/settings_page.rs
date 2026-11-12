@@ -615,18 +615,12 @@ impl App {
         if !visible("Hidden updates") {
             return;
         }
-        // Older hidden updates were saved without a name. Where the last scan still knows one, learn it.
+        // Hidden updates saved without a name get one from the last scan, where it still knows them.
         let mut learned = false;
-        for id in self.settings.ignored.clone() {
-            if !self.settings.ignored_names.contains_key(&id) {
-                if let Some(update) = self.raw.iter().find(|u| u.id == id) {
-                    let kind = match update.kind {
-                        crate::wu::Kind::Driver => "Driver",
-                        crate::wu::Kind::Windows => "Windows update",
-                        crate::wu::Kind::Software => "Software",
-                    };
-                    let version = if update.version.is_empty() { String::new() } else { format!(" · {}", update.version) };
-                    self.settings.ignored_names.insert(id, (update.title.clone(), format!("{kind}{version}")));
+        for key in self.settings.ignored.clone() {
+            if !self.settings.ignored_names.contains_key(&key) {
+                if let Some(update) = self.raw.iter().find(|u| crate::wu::hide_key(u) == key || u.id == key) {
+                    self.settings.ignored_names.insert(key, super::hidden_label(update));
                     learned = true;
                 }
             }
@@ -669,13 +663,18 @@ impl App {
                 .ignored_names
                 .get(id)
                 .cloned()
-                .unwrap_or_else(|| match id.split_once(':') {
-                    // Hidden before DriverKeep saved names: programs carry their name in the id.
-                    Some((source, name)) if !name.is_empty() => (name.to_string(), format!("Software · {source}")),
-                    _ => (
-                        "Windows or driver update".to_string(),
-                        format!("Hidden before names were saved · {}", id.chars().take(8).collect::<String>()),
-                    ),
+                .unwrap_or_else(|| {
+                    // Hidden before DriverKeep saved names. The saved key is "id@version", or just the id.
+                    let (base, version) = id.rsplit_once('@').map_or((id.as_str(), ""), |(b, v)| (b, v));
+                    let version = if version.is_empty() { String::new() } else { format!(" · {version}") };
+                    match base.split_once(':') {
+                        // Programs carry their name in the id.
+                        Some((source, name)) if !name.is_empty() => (name.to_string(), format!("Software · {source}{version}")),
+                        _ => (
+                            "Windows or driver update".to_string(),
+                            format!("Hidden before names were saved · {}{version}", base.chars().take(8).collect::<String>()),
+                        ),
+                    }
                 });
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());

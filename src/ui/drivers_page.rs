@@ -73,7 +73,7 @@ fn state_pill(row: &Row) -> Option<(String, egui::Color32)> {
     })
 }
 
-fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bool, clicks: &mut Clicks) {
+fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bool, in_job: bool, clicks: &mut Clicks) {
     let list: Vec<&Device> =
         devices.iter().filter(|d| row.update.devices.contains(&d.instance_id)).collect();
     Frame::new().inner_margin(Margin::symmetric(8, 5)).show(ui, |ui| {
@@ -111,8 +111,12 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                         }
                     });
                 }
-                // An update that's already installing or done can't be taken back, so it isn't offered.
-                let can_ignore = !matches!(row.state, ItemState::Installing | ItemState::Installed | ItemState::NeedsRestart);
+                // Ignore isn't offered on an update that's part of the running job, or one that's
+                // installing or done. It comes back for one that failed or was skipped.
+                let failed = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
+                let in_running_job = installing && in_job && !failed;
+                let can_ignore = !in_running_job
+                    && !matches!(row.state, ItemState::Installing | ItemState::Installed | ItemState::NeedsRestart);
                 if can_ignore && pill_button(ui, "Ignore This Update", CAUTION) {
                     clicks.ignore = Some(row.update.id.clone());
                 }
@@ -255,6 +259,7 @@ impl App {
             .collect();
         let selected = self.rows.iter().filter(|r| r.update.kind == kind && !is_app(r) && r.selected).count();
         let folded = self.collapsed.contains(&kind);
+        let job_ids = self.job_ids.clone();
         card().inner_margin(Margin::symmetric(6, 6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             Frame::new().inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
@@ -285,7 +290,7 @@ impl App {
             });
             if !folded {
                 for row in self.rows.iter_mut().filter(|r| r.update.kind == kind && !is_app(r)) {
-                    draw_row(ui, row, devices, installing, clicks);
+                    draw_row(ui, row, devices, installing, job_ids.contains(&row.update.id), clicks);
                 }
             }
         });

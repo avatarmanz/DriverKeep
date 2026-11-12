@@ -25,6 +25,8 @@ pub enum Action {
     SetLimit(u32),
     /// Turn System Restore on for the Windows drive.
     TurnOn,
+    /// Delete one restore point, by its sequence number.
+    Delete(u32),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -195,6 +197,19 @@ pub fn perform(action: &Action) -> (bool, String) {
             Ok(_) => (true, format!("System Restore is on for {drive}.")),
             Err(why) => (false, format!("Couldn't turn System Restore on: {why}")),
         },
+        Action::Delete(number) => {
+            // Windows' own call for removing a single restore point.
+            let script = "Add-Type -Namespace DK -Name Sr -MemberDefinition '[DllImport(\"srclient.dll\")] public static extern int SRRemoveRestorePoint(int index);'\n[DK.Sr]::SRRemoveRestorePoint(NUMBER)"
+                .replace("NUMBER", &number.to_string());
+            match powershell(&script) {
+                Ok(out) => match out.trim().parse::<i64>() {
+                    Ok(0) => (true, "Restore point deleted.".into()),
+                    Ok(code) => (false, format!("Windows couldn't delete that restore point (code {code}).")),
+                    Err(_) => (false, "Windows gave an unexpected answer, so the restore point may still be there.".into()),
+                },
+                Err(why) => (false, format!("Couldn't delete the restore point: {why}")),
+            }
+        }
         Action::SetLimit(gb) => {
             let gb = (*gb).clamp(1, 1_000_000);
             // Harmless when it's already on; needed when it was off.
