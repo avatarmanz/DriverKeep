@@ -69,7 +69,20 @@ impl App {
             });
 
             ui.add_space(8.0);
-            heading(ui, "All hardware");
+            // The full device list is long, so it's folded away until it's wanted.
+            let mut toggle = false;
+            ui.horizontal(|ui| {
+                heading(ui, "All hardware");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    toggle = secondary(ui, if self.show_hardware { "Hide" } else { "Show" }, true);
+                });
+            });
+            if toggle {
+                self.show_hardware = !self.show_hardware;
+            }
+            if !self.show_hardware {
+                return;
+            }
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Search").desired_width(180.0));

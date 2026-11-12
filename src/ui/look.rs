@@ -129,6 +129,7 @@ pub const ICON_FONT: &str = "icons";
 pub const ICON_SCAN: &str = "\u{E721}";
 pub const ICON_SYSTEM: &str = "\u{E7F4}";
 pub const ICON_BACKUP: &str = "\u{E74E}";
+pub const ICON_CALENDAR: &str = "\u{E787}";
 pub const ICON_SETTINGS: &str = "\u{E713}";
 pub const ICON_DRIVERS: &str = "\u{E895}";
 pub const ICON_CHECK: &str = "\u{E73E}";

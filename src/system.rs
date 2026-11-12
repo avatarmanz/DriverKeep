@@ -27,7 +27,7 @@ const RESTORE_LIMIT_VALUE: PCWSTR = w!("SystemRestorePointCreationFrequency");
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 
 pub fn window_title() -> String {
-    APP_NAME.to_string()
+    format!("{APP_NAME} {}", env!("CARGO_PKG_VERSION"))
 }
 
 /// True when this copy runs from the place the setup program installs to.

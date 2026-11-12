@@ -23,11 +23,11 @@ A fast, simple Windows app that keeps your computer up to date in one place.
 | --- | --- |
 | ![Updates, light](screenshots/updates-light.png) | ![Updates, OLED](screenshots/updates-oled.png) |
 
-**Driver Backups, System Restore and System Info**
+**History, System Restore and System Info**
 
-| Driver Backups | System Restore |
+| History | System Restore |
 | --- | --- |
-| ![Driver Backups](screenshots/backups.png) | ![System Restore](screenshots/restore.png) |
+| ![History](screenshots/backups.png) | ![System Restore](screenshots/restore.png) |
 
 The System Restore picture uses made-up restore points. The real list needs administrator rights.
 

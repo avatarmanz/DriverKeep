@@ -2,10 +2,9 @@
 
 use super::look::*;
 use super::{App, Ask, Busy, Page, Row, Show};
-use crate::devices::{Device, OTHER_DEVICES_CLASS};
+use crate::devices::Device;
 use crate::wu::{ItemState, Kind, Source};
 use egui::{Align, Align2, FontId, Frame, Layout, Margin, RichText, Sense, Stroke, Vec2};
-use std::collections::HashSet;
 
 const GROUPS: [(Kind, &str, &str); 3] = [
     (Kind::Driver, "Drivers", "Update Drivers"),
@@ -374,9 +373,6 @@ impl App {
                     self.group_card(ui, group, &devices, &mut clicks);
                 }
             }
-            if self.settings.scan_drivers {
-                self.up_to_date(ui, &devices);
-            }
         });
         self.devices = devices;
 
@@ -399,43 +395,6 @@ impl App {
         if let Some(id) = clicks.ignore {
             self.ignore_update(id);
         }
-    }
-
-    fn up_to_date(&mut self, ui: &mut egui::Ui, devices: &[Device]) {
-        let updating: HashSet<&String> = self.rows.iter().flat_map(|r| r.update.devices.iter()).collect();
-        // The original's rule: everything except "Other devices" with no hardware id.
-        let mut fine: Vec<&Device> = devices
-            .iter()
-            .filter(|d| d.present && !d.system_item && !updating.contains(&d.instance_id))
-            .filter(|d| !d.class_guid.eq_ignore_ascii_case(OTHER_DEVICES_CLASS) || !d.hardware_ids.is_empty())
-            .collect();
-        fine.sort_by_key(|d| d.name.to_lowercase());
-        card().inner_margin(Margin::symmetric(14, 8)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            let mut toggle = false;
-            let header = ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Drivers up to date ({})", fine.len())).size(14.0));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // The same button as Hide on the other sections, so it's clear it can be clicked.
-                    toggle = secondary(ui, if self.show_uptodate { "Hide" } else { "Show" }, true);
-                });
-            });
-            if toggle || header.response.interact(Sense::click()).clicked() {
-                self.show_uptodate = !self.show_uptodate;
-            }
-            if self.show_uptodate {
-                ui.add_space(4.0);
-                for d in fine {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(d.name.clone()).size(13.0));
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(icon(ICON_CHECK, 11.0, SUCCESS));
-                            ui.label(small(d.driver.as_ref().map(|x| x.version.clone()).unwrap_or_default()));
-                        });
-                    });
-                }
-            }
-        });
     }
 
     fn empty_drivers(&mut self, ui: &mut egui::Ui) {

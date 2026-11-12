@@ -85,16 +85,11 @@ impl App {
             .filter(|d| self.backup_visible(d) && self.backup_picks.contains(&d.instance_id))
             .count();
         ui.horizontal(|ui| {
-            // Clicking the title or the count scrolls down to the saved backups.
             let saved = self.backups.len();
-            let title = egui::Label::new(RichText::new("Driver Backups:").font(bold(20.0))).sense(Sense::click());
-            let amount = egui::Label::new(RichText::new(format!("{saved} available")).font(bold(20.0)).color(teal()))
-                .sense(Sense::click());
-            let jump = ui.add(title).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-                | ui.add(amount).on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
-            if jump {
-                self.jump_to_backups = true;
-            }
+            ui.label(RichText::new("History:").font(bold(20.0)));
+            ui.label(
+                RichText::new(format!("{saved} driver backup{}", plural(saved))).font(bold(20.0)).color(teal()),
+            );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let label = format!("Back Up {count} Driver{}", plural(count));
                 if primary_compact(ui, &label, count > 0 && self.busy == Busy::Idle) {
@@ -119,8 +114,16 @@ impl App {
                 self.choose_drivers(ui);
             }
             self.recent_changes(ui);
-            self.backup_list(ui);
-            self.day_updates(ui);
+            // Nothing sits below the calendar until a day is picked. Picking it again, or pressing
+            // Escape, puts it away.
+            if self.selected_day.is_some() {
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.selected_day = None;
+                } else {
+                    self.backup_list(ui);
+                    self.day_updates(ui);
+                }
+            }
         });
     }
 
@@ -208,7 +211,7 @@ impl App {
         if self.history.is_empty() {
             return;
         }
-        heading(ui, "Changes");
+        heading(ui, "Calendar History");
         ui.add_space(2.0);
         let today = chrono::Local::now().date_naive();
         // How many Windows updates, drivers and programs were installed on each day.
@@ -357,11 +360,6 @@ impl App {
             }
         });
         ui.add_space(8.0);
-
-        if self.selected_day.is_none() {
-            soft(ui, "Pick a day to see the updates and backups from then. Pick it again to see every backup.");
-            ui.add_space(8.0);
-        }
     }
 
     /// One change: its name and versions, with Put Back where a backup was saved first, or a note

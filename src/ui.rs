@@ -154,7 +154,6 @@ pub struct App {
     flash_app_update: bool,
     discard: u32,
     notes: Vec<String>,
-    show_uptodate: bool,
     collapsed: HashSet<Kind>,
     tools: Option<(bool, bool)>,
     tools_installing: bool,
@@ -199,6 +198,8 @@ pub struct App {
     restore: Option<crate::restore::Info>,
     restore_job: Option<RestoreJob>,
     restore_gb: String,
+    /// The All hardware list on System Info is folded away until Show is pressed.
+    show_hardware: bool,
     restore_tried: bool,
     /// The Backups page was asked to scroll down to the saved backups.
     jump_to_backups: bool,
@@ -268,7 +269,6 @@ impl App {
             flash_app_update: false,
             discard: 0,
             notes: Vec::new(),
-            show_uptodate: false,
             collapsed: HashSet::new(),
             tools: None,
             tools_installing: false,
@@ -305,6 +305,7 @@ impl App {
             restore: None,
             restore_job: None,
             restore_gb: String::new(),
+            show_hardware: false,
             restore_tried: false,
             jump_to_backups: false,
             job_ids: Vec::new(),
@@ -316,7 +317,7 @@ impl App {
             preview_on: true,
             bring_forward: false,
             calendar_month: month_of(latest_change_day.unwrap_or_else(|| chrono::Local::now().date_naive())),
-            selected_day: latest_change_day,
+            selected_day: None,
             spin: 0.0,
             frames: 0,
             shot_sent: false,
@@ -1083,7 +1084,7 @@ impl App {
             self.open_rows()
         };
         self.rail_item(ui, Page::Drivers, ICON_DRIVERS, "Updates", badge, installing);
-        self.rail_item(ui, Page::Backups, ICON_BACKUP, "Driver Backups", 0, false);
+        self.rail_item(ui, Page::Backups, ICON_CALENDAR, "History", 0, false);
         self.rail_item(ui, Page::Restore, ICON_SHIELD, "System Restore", 0, false);
         self.rail_item(ui, Page::System, ICON_SYSTEM, "System Info", 0, false);
         let space = ui.available_height() - 80.0;
