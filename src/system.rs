@@ -560,6 +560,8 @@ pub struct Settings {
     /// Backups older than this many days are deleted. 0 keeps them all. New and existing users start at a year.
     pub backup_keep_days: u32,
     pub ignored: Vec<String>,
+    /// What each hidden update was called (title, then its kind and version), so Settings can list them.
+    pub ignored_names: std::collections::BTreeMap<String, (String, String)>,
     pub last_scan: Option<i64>,
     pub last_restore_point_day: String,
     pub last_silent_day: String,
@@ -617,6 +619,7 @@ impl Default for Settings {
             backup_folder: default_backup_folder(),
             backup_keep_days: 365,
             ignored: Vec::new(),
+            ignored_names: Default::default(),
             last_scan: None,
             last_restore_point_day: String::new(),
             last_silent_day: String::new(),

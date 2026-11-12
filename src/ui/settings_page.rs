@@ -17,16 +17,18 @@ pub(super) enum SettingsTab {
     Scanning,
     Installing,
     Backup,
+    Hidden,
     About,
 }
 
 impl SettingsTab {
-    const ALL: [(SettingsTab, &'static str); 6] = [
+    const ALL: [(SettingsTab, &'static str); 7] = [
         (SettingsTab::General, "General"),
         (SettingsTab::Customization, "Customization"),
         (SettingsTab::Scanning, "Scanning"),
         (SettingsTab::Installing, "Installing"),
         (SettingsTab::Backup, "Backup"),
+        (SettingsTab::Hidden, "Hidden"),
         (SettingsTab::About, "About"),
     ];
 
@@ -37,6 +39,7 @@ impl SettingsTab {
             Some("settings-scanning") => Self::Scanning,
             Some("settings-installing") => Self::Installing,
             Some("settings-backup") => Self::Backup,
+            Some("settings-hidden") => Self::Hidden,
             Some("about") => Self::About,
             _ => Self::General,
         }
@@ -152,6 +155,7 @@ impl App {
                 self.scanning_tab(ui, &mut changed, &mut startup_changed);
                 self.installing_tab(ui, &mut changed);
                 self.backup_tab(ui, &mut changed);
+                self.hidden_tab(ui, &mut changed);
                 self.about_tab(ui, &mut changed);
                 set_search_matches(None);
                 return;
@@ -162,6 +166,7 @@ impl App {
                 SettingsTab::Scanning => self.scanning_tab(ui, &mut changed, &mut startup_changed),
                 SettingsTab::Installing => self.installing_tab(ui, &mut changed),
                 SettingsTab::Backup => self.backup_tab(ui, &mut changed),
+                SettingsTab::Hidden => self.hidden_tab(ui, &mut changed),
                 SettingsTab::About => self.about_tab(ui, &mut changed),
             }
             ui.add_space(4.0);
@@ -199,18 +204,6 @@ impl App {
         setting(ui, ICON_BELL, "Notify me", "Shows a small tray message when updates are found.", |ui| {
             *changed |= toggle(ui, &mut s.notify);
         });
-        let ignored = self.settings.ignored.len();
-        if ignored > 0 {
-            let mut clear = false;
-            setting_with(ui, 150.0, ICON_RESET, "Ignored updates", &format!("{ignored} hidden from your list."), |ui| {
-                clear = secondary(ui, "Show Them Again", true);
-            });
-            if clear {
-                self.settings.ignored.clear();
-                *changed = true;
-                self.rebuild_rows();
-            }
-        }
         let mut reset = false;
         setting(ui, ICON_RESET, "Reset all settings", "Back to how the app started.", |ui| {
             reset = secondary(ui, "Reset", true);
@@ -617,6 +610,97 @@ impl App {
         }
     }
 
+    /// Every update the person hid with Ignore This Update, each with a button to bring it back.
+    fn hidden_tab(&mut self, ui: &mut egui::Ui, _changed: &mut bool) {
+        if !visible("Hidden updates") {
+            return;
+        }
+        // Older hidden updates were saved without a name. Where the last scan still knows one, learn it.
+        let mut learned = false;
+        for id in self.settings.ignored.clone() {
+            if !self.settings.ignored_names.contains_key(&id) {
+                if let Some(update) = self.raw.iter().find(|u| u.id == id) {
+                    let kind = match update.kind {
+                        crate::wu::Kind::Driver => "Driver",
+                        crate::wu::Kind::Windows => "Windows update",
+                        crate::wu::Kind::Software => "Software",
+                    };
+                    let version = if update.version.is_empty() { String::new() } else { format!(" · {}", update.version) };
+                    self.settings.ignored_names.insert(id, (update.title.clone(), format!("{kind}{version}")));
+                    learned = true;
+                }
+            }
+        }
+        if learned {
+            self.settings.save();
+        }
+
+        let hidden = self.settings.ignored.clone();
+        if !searching_settings() {
+            group_title(ui, &format!("Hidden updates ({})", hidden.len()));
+        }
+        if hidden.is_empty() {
+            card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label("No hidden updates.");
+                ui.add_space(2.0);
+                ui.label(small("When you press Ignore This Update on the Updates page, the update is listed here."));
+            });
+            return;
+        }
+        let mut bring_back: Vec<String> = Vec::new();
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                beside_centered(ui, 150.0, |ui| {
+                    ui.label(small("These don't appear on the Updates page or in scans."));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if secondary(ui, "Unhide All", true) {
+                        bring_back = hidden.clone();
+                    }
+                });
+            });
+        });
+        ui.add_space(4.0);
+        for id in &hidden {
+            let (title, detail) = self
+                .settings
+                .ignored_names
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| match id.split_once(':') {
+                    // Hidden before DriverKeep saved names: programs carry their name in the id.
+                    Some((source, name)) if !name.is_empty() => (name.to_string(), format!("Software · {source}")),
+                    _ => (
+                        "Windows or driver update".to_string(),
+                        format!("Hidden before names were saved · {}", id.chars().take(8).collect::<String>()),
+                    ),
+                });
+            card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    beside_centered(ui, 110.0, |ui| {
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.label(RichText::new(title).size(14.0));
+                            ui.label(small(detail));
+                        });
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if secondary(ui, "Unhide", true) {
+                            bring_back.push(id.clone());
+                        }
+                    });
+                });
+            });
+            ui.add_space(4.0);
+        }
+        if !bring_back.is_empty() {
+            self.unhide_updates(&bring_back);
+        }
+    }
+
     fn about_tab(&mut self, ui: &mut egui::Ui, changed: &mut bool) {
         group_title(ui, "DriverKeep");
         // Like the other rows, but the version number is in the accent color.
@@ -713,7 +797,7 @@ const INDEX: &[(SettingsTab, &str, &str, &str)] = &[
     (SettingsTab::General, "When closing the window", "Tray keeps the background helper working.", "exit close quit stay in tray ask every time x button"),
     (SettingsTab::General, "Scan when DriverKeep opens", "Off, it opens to the Scan button and waits for you.", "open launch start automatic search"),
     (SettingsTab::General, "Notify me", "Shows a small tray message when updates are found.", "notification alert toast message"),
-    (SettingsTab::General, "Ignored updates", "Updates hidden from your list.", "show again unhide skipped hidden"),
+    (SettingsTab::Hidden, "Hidden updates", "Updates you hid from your list, with a button to bring them back.", "ignored ignore unhide show again skipped restore"),
     (SettingsTab::General, "Reset all settings", "Back to how the app started.", "default restore factory clear"),
     (SettingsTab::Customization, "Light or dark", "System, Light, Dark or OLED theme.", "theme mode appearance black oled night"),
     (SettingsTab::Customization, "Follow Windows color", "Uses the accent color from your Windows settings.", "accent system match"),

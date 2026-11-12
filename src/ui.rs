@@ -347,6 +347,19 @@ impl App {
         if app.options.full_scan || app.options.resume.is_some() || on_open {
             app.start_scan();
         }
+        if app.options.page.as_deref() == Some("settings-hidden") && app.options.plain {
+            // For screenshots: a few made-up hidden updates in place of the real ones (never saved).
+            app.settings.ignored.clear();
+            app.settings.ignored_names.clear();
+            for (id, title, detail) in [
+                ("demo-1", "Intel(R) Smart Sound Technology Driver", "Driver · 10.30.0.5714"),
+                ("demo-2", "2026-10 Preview Update for Windows 11 (KB5099999)", "Windows update"),
+                ("demo-3", "Notepad++ 8.9", "Software · 8.9.1"),
+            ] {
+                app.settings.ignored.push(id.to_string());
+                app.settings.ignored_names.insert(id.to_string(), (title.to_string(), detail.to_string()));
+            }
+        }
         if app.options.page.as_deref() == Some("restore-demo") {
             // For screenshots: made-up restore points, since the real ones need administrator rights.
             let info = App::sample_restore();
@@ -991,7 +1004,29 @@ impl App {
                 });
             }
         }
-        self.settings.ignored.push(id);
+        // Remembered by name, so Settings > Hidden Updates can say what was hidden.
+        if let Some(row) = self.rows.iter().find(|r| r.update.id == id) {
+            let kind = match row.update.kind {
+                Kind::Driver => "Driver",
+                Kind::Windows => "Windows update",
+                Kind::Software => "Software",
+            };
+            let version = if row.update.version.is_empty() { String::new() } else { format!(" · {}", row.update.version) };
+            self.settings.ignored_names.insert(id.clone(), (row.update.title.clone(), format!("{kind}{version}")));
+        }
+        if !self.settings.ignored.contains(&id) {
+            self.settings.ignored.push(id);
+        }
+        self.settings.save();
+        self.rebuild_rows();
+    }
+
+    /// Brings hidden updates back into the list.
+    pub(super) fn unhide_updates(&mut self, ids: &[String]) {
+        self.settings.ignored.retain(|i| !ids.contains(i));
+        for id in ids {
+            self.settings.ignored_names.remove(id);
+        }
         self.settings.save();
         self.rebuild_rows();
     }

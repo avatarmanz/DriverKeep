@@ -44,6 +44,8 @@ The System Restore picture uses made-up restore points. The real list needs admi
 | ![Scanning](screenshots/settings-scanning.png) | ![Installing](screenshots/settings-installing.png) |
 | **Backup** | **About** |
 | ![Backup](screenshots/settings-backup.png) | ![About](screenshots/settings-about.png) |
+| **Hidden updates** | |
+| ![Hidden updates](screenshots/settings-hidden.png) | |
 
 **Customization in light and OLED**
 
