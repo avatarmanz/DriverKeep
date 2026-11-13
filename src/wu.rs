@@ -30,6 +30,7 @@ pub enum Source {
     GitHub,
     Dell,
     Nvidia,
+    Lenovo,
 }
 
 impl Source {
@@ -42,6 +43,7 @@ impl Source {
             Source::GitHub => "GitHub",
             Source::Dell => "Dell",
             Source::Nvidia => "NVIDIA",
+            Source::Lenovo => "Lenovo",
         }
     }
 }
@@ -658,7 +660,7 @@ fn install(
                 note(ItemState::Downloading);
                 catalog::install(update, &item.devices)
             }
-            Source::Dell | Source::Nvidia => {
+            Source::Dell | Source::Nvidia | Source::Lenovo => {
                 note(ItemState::Downloading);
                 crate::vendor::install(update)
             }

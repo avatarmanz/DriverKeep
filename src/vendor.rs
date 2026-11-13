@@ -22,7 +22,7 @@ const DELL_INDEX: &str = "https://downloads.dell.com/catalog/CatalogIndexPC.cab"
 // The GeForce Game Ready driver is one download for every current GeForce card, so one lookup does.
 const NVIDIA_LOOKUP: &str = "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup&psid=127&pfid=999&osID=57&languageCode=1033&beta=0&isWHQL=1&dch=1&upCRD=0&qnf=0&sort1=0&numberOfResults=1";
 const NVIDIA_TITLE: &str = "NVIDIA GeForce Game Ready Driver";
-const HOSTS: [&str; 4] = ["downloads.dell.com", "dellupdater.dell.com", "us.download.nvidia.com", "download.nvidia.com"];
+const HOSTS: [&str; 5] = ["downloads.dell.com", "dellupdater.dell.com", "us.download.nvidia.com", "download.nvidia.com", "download.lenovo.com"];
 
 /// Downloads are only taken from these companies' own servers.
 pub fn allowed(url: &str) -> bool {
@@ -38,6 +38,10 @@ fn decode(bytes: &[u8]) -> String {
     } else {
         String::from_utf8_lossy(bytes).trim_start_matches('\u{feff}').to_string()
     }
+}
+
+pub(crate) fn get_text(url: &str) -> Result<String, String> {
+    get_bytes(url).map(|bytes| decode(&bytes))
 }
 
 fn get_bytes(url: &str) -> Result<Vec<u8>, String> {
@@ -228,14 +232,15 @@ pub fn dell_updates(devices: &[Device], mut packages: Vec<DellPackage>, builtin:
     out
 }
 
-/// "Dell Inc.|0A5B": the maker and the model number in the BIOS.
-fn computer_identity() -> (String, String) {
+/// "Dell Inc.|0A5B|20XWCTO1WW": the maker, the model number in the BIOS, and the product name.
+fn computer_identity() -> (String, String, String) {
     let text = restore::powershell(
-        "$c = Get-CimInstance Win32_ComputerSystem; \"$($c.Manufacturer)|$($c.SystemSKUNumber)\"",
+        "$c = Get-CimInstance Win32_ComputerSystem; $p = Get-CimInstance Win32_ComputerSystemProduct; \"$($c.Manufacturer)|$($c.SystemSKUNumber)|$($p.Name)\"",
     )
     .unwrap_or_default();
-    let mut parts = text.trim().splitn(2, '|');
-    (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").trim().to_string())
+    let mut parts = text.trim().splitn(3, '|');
+    let mut next = || parts.next().unwrap_or("").trim().to_string();
+    (next(), next(), next())
 }
 
 fn dell(devices: &[Device], system_id: &str, builtin: bool) -> Result<Vec<Update>, String> {
@@ -360,7 +365,13 @@ fn nvidia(devices: &[Device]) -> Result<Vec<Update>, String> {
 pub fn find(devices: &[Device], builtin: bool) -> (Vec<Update>, Vec<String>) {
     let mut updates = Vec::new();
     let mut notes = Vec::new();
-    let (maker, system_id) = computer_identity();
+    let (maker, system_id, product) = computer_identity();
+    if maker.to_lowercase().contains("lenovo") {
+        match crate::lenovo::find(devices, &product) {
+            Ok(found) => updates.extend(found),
+            Err(why) => notes.push(format!("Lenovo's driver list couldn't be checked ({why}).")),
+        }
+    }
     if maker.to_lowercase().contains("dell") {
         match dell(devices, &system_id, builtin) {
             Ok(found) => updates.extend(found),
@@ -381,7 +392,7 @@ fn file_name(url: &str) -> String {
 }
 
 /// Valid signature, and from the company the file is meant to come from.
-fn signed_by(path: &Path, company: &str) -> Result<(), String> {
+pub(crate) fn signed_by(path: &Path, company: &str) -> Result<(), String> {
     let quoted = path.to_string_lossy().replace('\'', "''");
     let script = format!(
         "$s = Get-AuthenticodeSignature -LiteralPath '{quoted}'; if ($s.Status -eq 'Valid') {{ $s.SignerCertificate.Subject }} else {{ 'INVALID ' + $s.Status }}"
@@ -403,6 +414,7 @@ pub fn install(update: &Update) -> Result<bool, String> {
     let (company, silent): (&str, &[&str]) = match update.source {
         Source::Dell => ("Dell", &["/s"]),
         Source::Nvidia => ("NVIDIA", &["-s", "-noreboot", "-noeula"]),
+        Source::Lenovo => return crate::lenovo::install(update),
         _ => return Err("This isn't a manufacturer download.".into()),
     };
     let folder = system::data_dir().ok_or("DriverKeep's data folder couldn't be found.")?.join("vendor");
@@ -434,11 +446,11 @@ pub fn install(update: &Update) -> Result<bool, String> {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn download(url: &str, target: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn download(url: &str, target: &Path) -> Result<Vec<u8>, String> {
     let mut last = String::new();
     for retry in 0..=catalog::MAX_RETRIES {
         if retry > 0 {
