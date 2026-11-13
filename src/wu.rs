@@ -28,6 +28,8 @@ pub enum Source {
     Winget,
     Chocolatey,
     GitHub,
+    Dell,
+    Nvidia,
 }
 
 impl Source {
@@ -38,6 +40,8 @@ impl Source {
             Source::Winget => "Windows Package Manager",
             Source::Chocolatey => "Chocolatey",
             Source::GitHub => "GitHub",
+            Source::Dell => "Dell",
+            Source::Nvidia => "NVIDIA",
         }
     }
 }
@@ -56,6 +60,10 @@ pub enum Kind {
 pub struct ScanPlan {
     pub drivers: bool,
     pub catalog: bool,
+    /// Also offer catalog drivers for devices on a driver Windows ships itself.
+    pub builtin: bool,
+    /// Also ask the computer's maker and the graphics chip's maker.
+    pub makers: bool,
     pub windows: bool,
     pub optional: bool,
     pub winget: bool,
@@ -67,6 +75,8 @@ impl ScanPlan {
         Self {
             drivers: settings.scan_drivers,
             catalog: settings.scan_drivers && settings.use_catalog,
+            builtin: settings.replace_builtin_drivers,
+            makers: settings.scan_drivers && settings.use_maker_drivers,
             windows: settings.scan_windows,
             optional: settings.scan_optional,
             winget: settings.scan_software && settings.use_winget,
@@ -275,7 +285,7 @@ fn worker(
                     let events = events.clone();
                     let wake = wake.clone();
                     let stop = stop.clone();
-                    std::thread::spawn(move || device_scan(plan.catalog, events, wake, stop))
+                    std::thread::spawn(move || device_scan(plan.catalog, plan.builtin, plan.makers, events, wake, stop))
                 };
                 let apps = {
                     let events = events.clone();
@@ -320,6 +330,8 @@ fn worker(
                     let everything = ScanPlan {
                         drivers: true,
                         catalog: false,
+                        builtin: false,
+                        makers: false,
                         windows: true,
                         optional: true,
                         winget: false,
@@ -343,6 +355,8 @@ fn worker(
 
 fn device_scan(
     use_catalog: bool,
+    builtin: bool,
+    makers: bool,
     events: Sender<Event>,
     wake: impl Fn() + Send + Sync,
     stop: Arc<AtomicBool>,
@@ -355,22 +369,33 @@ fn device_scan(
         let _ = events.send(Event::CatalogDone(Ok(Vec::new())));
         return;
     };
-    if !use_catalog {
-        let _ = events.send(Event::CatalogDone(Ok(Vec::new())));
-        wake();
-        return;
-    }
     let sender = Mutex::new(events.clone());
-    let result = catalog::find_updates(&list, &stop, |p| {
-        if let Ok(tx) = sender.lock() {
-            let _ = tx.send(Event::CatalogProgress { done: p.done, total: p.total, text: p.text });
-        }
-        wake();
-    });
+    let mut result = if use_catalog {
+        catalog::find_updates(&list, builtin, &stop, |p| {
+            if let Ok(tx) = sender.lock() {
+                let _ = tx.send(Event::CatalogProgress { done: p.done, total: p.total, text: p.text });
+            }
+            wake();
+        })
+    } else {
+        Ok(Vec::new())
+    };
     let missed = catalog::MISSED.load(Ordering::SeqCst);
-    if result.is_ok() && missed > 0 {
+    if use_catalog && result.is_ok() && missed > 0 {
         let note = format!("{missed} devices couldn't be checked online this time. Scan again to retry them.");
         let _ = events.send(Event::Note(note));
+    }
+    // The computer's maker and the graphics chip's maker, for what the catalog doesn't carry.
+    if makers && !stop.load(Ordering::SeqCst) {
+        let (extra, notes) = crate::vendor::find(&list, builtin);
+        for note in notes {
+            let _ = events.send(Event::Note(note));
+        }
+        match &mut result {
+            Ok(found) => found.extend(extra),
+            Err(_) if !extra.is_empty() => result = Ok(extra),
+            Err(_) => {}
+        }
     }
     let _ = events.send(Event::CatalogDone(result));
     wake();
@@ -632,6 +657,10 @@ fn install(
             Source::Catalog => {
                 note(ItemState::Downloading);
                 catalog::install(update, &item.devices)
+            }
+            Source::Dell | Source::Nvidia => {
+                note(ItemState::Downloading);
+                crate::vendor::install(update)
             }
             Source::Winget | Source::Chocolatey => {
                 note(ItemState::Installing);

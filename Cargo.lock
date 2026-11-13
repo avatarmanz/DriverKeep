@@ -878,7 +878,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "driverkeep"
-version = "1.0.28"
+version = "1.0.29"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -888,6 +888,7 @@ dependencies = [
  "embed-resource",
  "image",
  "rfd",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha2",

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WiX Toolset v3 source for DriverKeep.msi. Build with make-msi.cmd.
+     NOT YET BUILT OR TESTED: written without WiX installed. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- Version and ExePath are passed in by make-msi.cmd (-dVersion=... -dExePath=...). -->
+  <Product Id="*" Name="DriverKeep" Language="1033" Version="$(var.Version)"
+           Manufacturer="avatarmanz" UpgradeCode="5D43AE50-A6FC-4636-975A-39E2C0D399C6">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="DriverKeep driver and software updater" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of DriverKeep is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="assets\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="DriverKeep" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="MainExe" Guid="*" Win64="yes">
+        <File Id="DriverKeepExe" Name="DriverKeep.exe" Source="$(var.ExePath)" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="*" Win64="yes">
+        <Shortcut Id="AppShortcut" Name="DriverKeep" Target="[INSTALLFOLDER]DriverKeep.exe"
+                  WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" />
+        <RegistryValue Root="HKCU" Key="Software\DriverKeep" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main" Title="DriverKeep" Level="1">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Product>
+</Wix>

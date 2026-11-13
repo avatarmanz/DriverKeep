@@ -99,7 +99,7 @@ fn system_drive() -> String {
     std::env::var("SystemDrive").ok().filter(|d| d.len() == 2).unwrap_or_else(|| "C:".to_string())
 }
 
-fn powershell(script: &str) -> Result<String, String> {
+pub(crate) fn powershell(script: &str) -> Result<String, String> {
     // Sent encoded, so quotes and line breaks in the script can't be mangled on the way in.
     use base64::Engine as _;
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();

@@ -12,6 +12,7 @@ mod software;
 mod sysinfo;
 mod system;
 mod ui;
+mod vendor;
 mod wu;
 
 use std::path::PathBuf;
@@ -89,7 +90,7 @@ fn write_report(path: &std::path::Path) -> Result<(), String> {
     }
     let stop = std::sync::atomic::AtomicBool::new(false);
     let online = std::time::Instant::now();
-    match catalog::find_updates(&list, &stop, |_| {}) {
+    match catalog::find_updates(&list, false, &stop, |_| {}) {
         Ok(found) => {
             lines.push(format!("catalog: {} updates in {:?}", found.len(), online.elapsed()));
             for u in found {
@@ -97,6 +98,16 @@ fn write_report(path: &std::path::Path) -> Result<(), String> {
             }
         }
         Err(e) => lines.push(format!("catalog error: {e}")),
+    }
+    let online = std::time::Instant::now();
+    match catalog::find_updates(&list, true, &stop, |_| {}) {
+        Ok(found) => {
+            lines.push(format!("catalog including Windows' own drivers: {} updates in {:?}", found.len(), online.elapsed()));
+            for u in found {
+                lines.push(format!("WIDE-UPDATE\t{}\t{}\t{}\t{}", u.title, u.version, u.date, u.devices.join(" | ")));
+            }
+        }
+        Err(e) => lines.push(format!("wider catalog error: {e}")),
     }
     lines.push(format!("this copy: {}, newer release: {:?}", selfupdate::CURRENT, selfupdate::check().map(|u| u.version)));
     let update_test = path.with_file_name("update-test");
@@ -120,7 +131,7 @@ fn write_report(path: &std::path::Path) -> Result<(), String> {
 fn check_update(path: &std::path::Path) -> Result<(), String> {
     let list = devices::enumerate(|_, _| {})?;
     let stop = std::sync::atomic::AtomicBool::new(false);
-    let found = catalog::find_updates(&list, &stop, |_| {})?;
+    let found = catalog::find_updates(&list, false, &stop, |_| {})?;
     let mut lines = vec![format!("{} updates found", found.len())];
     for update in found.iter().take(3) {
         let chosen: Vec<devices::Device> = list

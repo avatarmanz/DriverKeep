@@ -548,6 +548,10 @@ pub struct Settings {
     pub auto_restart: bool,
     pub restart_only_in_hours: bool,
     pub use_catalog: bool,
+    /// Also offer catalog drivers for devices that run on a driver Windows ships itself.
+    pub replace_builtin_drivers: bool,
+    /// Also check the computer's maker and the graphics chip's maker for drivers.
+    pub use_maker_drivers: bool,
     pub make_restore_point: bool,
     /// Which kinds of update get a restore point first (when make_restore_point is on).
     pub restore_drivers: bool,
@@ -610,6 +614,8 @@ impl Default for Settings {
             auto_restart: false,
             restart_only_in_hours: true,
             use_catalog: true,
+            replace_builtin_drivers: false,
+            use_maker_drivers: true,
             make_restore_point: true,
             restore_drivers: true,
             restore_windows: true,

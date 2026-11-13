@@ -1,0 +1,49 @@
+# Standalone crate: NOT part of the Windows app build (the repo root has no workspace).
+# The empty [workspace] table below keeps cargo from ever treating the root as our parent.
+[package]
+name = "driverkeep-linux"
+version = "0.1.0"
+edition = "2021"
+description = "DriverKeep for Linux: check for and install NVIDIA GPU driver updates"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+# rustls only (no OpenSSL) so the musl build is fully static.
+ureq = { version = "2", default-features = false, features = ["tls"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
+
+# ---- Packaging metadata (used by the release workflow; see ../.github/workflows/linux-release.yml)
+[package.metadata.deb]
+name = "driverkeep-linux"
+maintainer = "avatarmanz"
+section = "utils"
+priority = "optional"
+depends = ""
+recommends = "pciutils"
+extended-description = "Checks for and installs NVIDIA GPU driver updates through the distro package manager."
+assets = [
+    ["target/release/driverkeep-linux", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/driverkeep-linux/README", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "driverkeep-linux"
+summary = "Check for and install NVIDIA GPU driver updates"
+license = "MIT"
+assets = [
+    { source = "target/release/driverkeep-linux", dest = "/usr/bin/driverkeep-linux", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/driverkeep-linux/README", mode = "644", doc = true },
+]

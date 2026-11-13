@@ -348,6 +348,24 @@ impl App {
         setting(ui, ICON_GLOBE, "Microsoft Update Catalog", "Finds drivers Windows Update doesn't offer on its own.", |ui| {
             *changed |= toggle(ui, &mut s.use_catalog);
         });
+        setting(
+            ui,
+            ICON_DRIVERS,
+            "Manufacturer drivers",
+            "Checks Dell and NVIDIA directly. Downloads are verified and must be signed by them.",
+            |ui| {
+                *changed |= toggle(ui, &mut s.use_maker_drivers);
+            },
+        );
+        setting(
+            ui,
+            ICON_DRIVERS,
+            "Newer drivers than Windows' own",
+            "Also offers drivers for devices using one Windows ships itself. Backups still apply.",
+            |ui| {
+                *changed |= toggle(ui, &mut s.replace_builtin_drivers);
+            },
+        );
 
         group_title(ui, "Windows updates");
         setting(ui, ICON_SYSTEM, "Check for Windows updates", "Security and system updates from Microsoft.", |ui| {
@@ -803,6 +821,8 @@ const INDEX: &[(SettingsTab, &str, &str, &str)] = &[
     (SettingsTab::Customization, "Accent color", "Used for buttons, progress, switches and highlights.", "colour palette red orange yellow green teal blue purple pink custom own"),
     (SettingsTab::Customization, "Preview", "Try the colors on a sample button, switch and progress bar.", "sample demo"),
     (SettingsTab::Scanning, "Check for new drivers", "Looks for newer drivers for your hardware.", "driver search"),
+    (SettingsTab::Scanning, "Manufacturer drivers", "Checks Dell and NVIDIA directly for drivers.", "dell nvidia geforce vendor maker oem"),
+    (SettingsTab::Scanning, "Newer drivers than Windows' own", "Also offers drivers for devices running on a driver Windows ships itself.", "builtin inbox windows own replace driver easy more"),
     (SettingsTab::Scanning, "Microsoft Update Catalog", "Finds drivers Windows Update doesn't offer on its own.", "catalog microsoft online"),
     (SettingsTab::Scanning, "Check for Windows updates", "Security and system updates from Microsoft.", "windows update security patches"),
     (SettingsTab::Scanning, "Include optional updates", "Previews Windows doesn't install by itself.", "preview extra"),

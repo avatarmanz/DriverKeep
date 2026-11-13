@@ -252,7 +252,7 @@ pub fn search_key(hardware_id: &str) -> String {
     out.join("&")
 }
 
-fn searchable(device: &Device) -> bool {
+pub(crate) fn searchable(device: &Device) -> bool {
     let prefix = device.instance_id.split('\\').next().unwrap_or("").to_uppercase();
     device.present
         && !device.system_item
@@ -260,9 +260,50 @@ fn searchable(device: &Device) -> bool {
         && !device.hardware_ids.is_empty()
 }
 
-/// Windows' own drivers are only replaced when a device has no driver at all.
-fn wants_update(device: &Device) -> bool {
-    device.needs_driver() || device.driver.as_ref().is_some_and(|d| d.is_third_party())
+/// Windows' own drivers are only replaced when a device has no driver at all, unless the person
+/// has asked for newer ones too.
+pub(crate) fn wants_update(device: &Device, builtin: bool) -> bool {
+    builtin || device.needs_driver() || device.driver.as_ref().is_some_and(|d| d.is_third_party())
+}
+
+/// Most searches one device gets: its own ids, then the model-level ones Windows also accepts.
+const MAX_KEYS: usize = 4;
+
+/// An id that names one model of device, rather than only a class or a maker.
+fn names_a_model(id: &str) -> bool {
+    id.rsplit(std::path::MAIN_SEPARATOR).next().unwrap_or(id).split('&').any(|part| {
+        let part = part.to_uppercase();
+        part.starts_with("DEV_") || part.starts_with("PID_")
+    })
+}
+
+/// Every id a driver for this device may be listed under: all its hardware ids, plus the
+/// compatible ids that name a model. The generic class ones are left out, since a driver found
+/// only through those could be for something else.
+fn device_ids(device: &Device) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for id in device.hardware_ids.iter().chain(device.compatible_ids.iter().filter(|c| names_a_model(c))) {
+        let id = id.to_lowercase();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
+/// What to search the catalog for, for this device. Many ids boil down to the same search.
+fn device_keys(device: &Device) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for id in device_ids(device) {
+        let key = search_key(&id);
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+        if keys.len() >= MAX_KEYS {
+            break;
+        }
+    }
+    keys
 }
 
 fn numbers(version: &str) -> Vec<u64> {
@@ -363,17 +404,20 @@ pub struct Progress {
 /// full pass takes seconds.
 pub fn find_updates(
     devices: &[Device],
+    builtin: bool,
     stop: &AtomicBool,
     report: impl Fn(Progress) + Send + Sync,
 ) -> Result<Vec<Update>, String> {
     let build = system::windows_build();
     let arm = system::is_arm_pc();
-    let mut by_key: HashMap<String, Vec<&Device>> = HashMap::new();
-    for device in devices.iter().filter(|d| searchable(d) && wants_update(d)) {
-        let key = search_key(&device.hardware_ids[0]).to_lowercase();
-        by_key.entry(key).or_default().push(device);
+    let candidates: Vec<&Device> = devices.iter().filter(|d| searchable(d) && wants_update(d, builtin)).collect();
+    let mut names: HashMap<String, String> = HashMap::new();
+    for device in &candidates {
+        for key in device_keys(device) {
+            names.entry(key).or_insert_with(|| device.name.clone());
+        }
     }
-    let keys: Vec<String> = by_key.keys().cloned().collect();
+    let keys: Vec<String> = names.keys().cloned().collect();
     let total = keys.len();
     let next = AtomicUsize::new(0);
     let finished = AtomicUsize::new(0);
@@ -404,7 +448,7 @@ pub fn find_updates(
                         }
                     }
                     let done = finished.fetch_add(1, Ordering::SeqCst) + 1;
-                    report(Progress { done, total, text: by_key[key][0].name.clone() });
+                    report(Progress { done, total, text: names[key].clone() });
                 }
             });
         }
@@ -416,21 +460,27 @@ pub fn find_updates(
     }
 
     // Keep only versions newer than what each device has, newest first.
-    let found = found.into_inner().unwrap_or_default();
+    let rows_by_key: HashMap<String, Vec<Row>> = found.into_inner().unwrap_or_default().into_iter().collect();
     let mut tries: Vec<(&Device, Vec<Row>)> = Vec::new();
-    for (key, mut rows) in found {
+    for device in &candidates {
+        let current = device.driver.as_ref().map(|d| d.version.clone()).unwrap_or_default();
+        // Everything any of this device's searches turned up, each driver once.
+        let mut seen = HashSet::new();
+        let mut rows: Vec<Row> = device_keys(device)
+            .iter()
+            .filter_map(|key| rows_by_key.get(key))
+            .flatten()
+            .filter(|r| seen.insert(r.id.clone()))
+            .cloned()
+            .collect();
         rows.sort_by(|a, b| numbers(&b.version).cmp(&numbers(&a.version)));
-        for device in &by_key[&key] {
-            let current = device.driver.as_ref().map(|d| d.version.clone()).unwrap_or_default();
-            let newer: Vec<Row> = rows
-                .iter()
-                .filter(|r| device.driver.is_none() || is_newer(&r.version, &current))
-                .take(CANDIDATES_CHECKED)
-                .cloned()
-                .collect();
-            if !newer.is_empty() {
-                tries.push((device, newer));
-            }
+        let newer: Vec<Row> = rows
+            .into_iter()
+            .filter(|r| device.driver.is_none() || is_newer(&r.version, &current))
+            .take(CANDIDATES_CHECKED)
+            .collect();
+        if !newer.is_empty() {
+            tries.push((device, newer));
         }
     }
     let wanted_ids: HashSet<String> =
@@ -439,7 +489,7 @@ pub fn find_updates(
 
     let mut wanted: HashMap<String, (Row, Vec<&Device>)> = HashMap::new();
     for (device, rows) in tries {
-        let ids: Vec<String> = device.hardware_ids.iter().map(|h| h.to_lowercase()).collect();
+        let ids = device_ids(device);
         let installed = device.driver.as_ref().map(|d| d.date.clone()).unwrap_or_default();
         for row in rows {
             let Some(info) = details.get(&row.id) else { continue };
@@ -693,6 +743,34 @@ pub fn install(update: &Update, devices: &[Device]) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_model_level_ids_count() {
+        assert!(names_a_model("PCI\\VEN_8086&DEV_777B"));
+        assert!(names_a_model("USB\\VID_046D&PID_C539"));
+        assert!(names_a_model("HDAUDIO\\FUNC_01&VEN_10EC&DEV_0897"));
+        assert!(!names_a_model("PCI\\VEN_8086&CC_060100"));
+        assert!(!names_a_model("PCI\\CC_0C03"));
+        assert!(!names_a_model("USB\\Class_03&SubClass_01"));
+    }
+
+    #[test]
+    fn a_device_is_searched_under_each_of_its_models() {
+        let device = Device {
+            hardware_ids: vec!["PCI\\VEN_8086&DEV_777B&SUBSYS_1&REV_01".into(), "PCI\\VEN_8086&DEV_777B&SUBSYS_1".into()],
+            compatible_ids: vec![
+                "PCI\\VEN_8086&DEV_777B".into(),
+                "PCI\\VEN_8086&DEV_777C".into(),
+                "PCI\\VEN_8086&CC_060100".into(),
+                "PCI\\VEN_8086".into(),
+            ],
+            ..Default::default()
+        };
+        // The three spellings of the first model are one search; the class-only ids add nothing.
+        assert_eq!(device_keys(&device), vec!["pci\\ven_8086&dev_777b", "pci\\ven_8086&dev_777c"]);
+        assert!(device_ids(&device).contains(&"pci\\ven_8086&dev_777b".to_string()));
+        assert!(!device_ids(&device).iter().any(|i| i.contains("cc_060100")));
+    }
 
     #[test]
     fn keys_drop_revision_details() {

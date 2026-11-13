@@ -77,6 +77,13 @@ launch DriverKeep offers to install the Windows Package Manager and Chocolatey i
 
 To remove it, use **Installed apps** in Windows Settings. Your driver backups are kept.
 
+## DriverKeep for Linux (command line, early test version)
+
+A separate command-line tool in [`linux/`](linux/) checks for and installs NVIDIA GPU driver updates on Linux
+(Debian, Ubuntu, Arch, Fedora/RHEL, openSUSE, or NVIDIA's `.run` installer as a fallback). It is **not** part of
+the Windows app or installer. It has only been compiled and unit-tested so far, not run on real Linux machines;
+see [`linux/README.md`](linux/README.md) for details and how to report problems.
+
 ## Credits
 
 - Created by avatarmanz
@@ -85,4 +92,5 @@ To remove it, use **Installed apps** in Windows Settings. Your driver backups ar
 
 ## Build it yourself
 
-You need the Rust toolchain. Run `make-installer.cmd` to create `dist\DriverKeep-Setup.exe`.
+You need the Rust toolchain. Run `make-installer.cmd` to create `dist\DriverKeep-Setup.exe`. To also make an `.msi`, install WiX Toolset v3 and run `make-msi.cmd`
+(creates `dist\DriverKeep.msi`).
