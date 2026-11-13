@@ -81,9 +81,10 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
         ui.horizontal(|ui| {
             ui.add_enabled(!installing, egui::Checkbox::without_text(&mut row.selected));
             text_left = ui.cursor().left();
-            // The status pill ("Downloading 100%") plus the ··· menu is the widest thing on the right.
-            beside(ui, 360.0, |ui| {
+            // The status ("Downloading 100%") plus a couple of buttons is the widest thing on the right.
+            beside(ui, 400.0, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
+                ui.set_min_height(ROW_BUTTON_H);
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(row_name(row, &list)).size(14.0));
                     if list.len() > 1 {
@@ -96,36 +97,37 @@ fn draw_row(ui: &mut egui::Ui, row: &mut Row, devices: &[Device], installing: bo
                 ui.label(small(row_detail(row, &list)));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                // The ··· menu only appears when it has something besides Ignore to offer.
-                let retry = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
-                let driver = row.update.kind == Kind::Driver && can_install(row);
-                if !installing && (retry || driver) {
-                    ui.menu_button("···", |ui| {
-                        if retry && ui.button("Try again").clicked() {
-                            clicks.install = Some(vec![row.update.id.clone()]);
-                            ui.close();
-                        }
-                        if driver && ui.button("Install without a backup").clicked() {
-                            clicks.no_backup = Some(row.update.id.clone());
-                            ui.close();
-                        }
-                    });
-                }
+                // Every button and status here is as tall as the row, so they line up.
                 // Ignore isn't offered on an update that's part of the running job, or one that's
                 // installing or done. It comes back for one that failed or was skipped.
                 let failed = matches!(row.state, ItemState::Failed(_) | ItemState::Skipped(_));
                 let in_running_job = installing && in_job && !failed;
                 let can_ignore = !in_running_job
                     && !matches!(row.state, ItemState::Installing | ItemState::Installed | ItemState::NeedsRestart);
-                if can_ignore && pill_button(ui, "Ignore This Update", CAUTION) {
+                if can_ignore && row_button(ui, "Ignore This Update", CAUTION.gamma_multiply(0.16), CAUTION, true) {
                     clicks.ignore = Some(row.update.id.clone());
                 }
+                if failed && !installing {
+                    let accent = teal();
+                    // A driver skipped because its old version couldn't be saved can only go ahead
+                    // without a backup, so Install Anyway takes the place of Try Again.
+                    if row.update.kind == Kind::Driver && matches!(row.state, ItemState::Skipped(_)) {
+                        if row_button(ui, "Install Anyway", accent.gamma_multiply(0.16), accent, true) {
+                            clicks.no_backup = Some(row.update.id.clone());
+                        }
+                    } else if row_button(ui, "Try Again", accent.gamma_multiply(0.16), accent, true) {
+                        clicks.install = Some(vec![row.update.id.clone()]);
+                    }
+                }
                 match state_pill(row) {
-                    Some((text, color)) => pill(ui, &text, color),
+                    Some((text, color)) => {
+                        row_button(ui, &text, color.gamma_multiply(0.16), color, false);
+                    }
                     // While a job runs the row only offers Ignore; "Update" would just sit greyed out.
                     None if installing => {}
                     None => {
-                        if secondary(ui, "Update", true) {
+                        let ink = ui.visuals().text_color();
+                        if row_button(ui, "Update", pal().hover, ink, true) {
                             clicks.install = Some(vec![row.update.id.clone()]);
                         }
                     }

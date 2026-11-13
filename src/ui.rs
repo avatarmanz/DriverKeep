@@ -360,6 +360,43 @@ impl App {
                 app.settings.ignored_names.insert(id.to_string(), (title.to_string(), detail.to_string()));
             }
         }
+        if app.options.page.as_deref() == Some("updates-demo") {
+            // For screenshots: made-up updates in each state, so the buttons beside them can be compared.
+            let make = |id: &str, kind, source, title: &str, current: &str, version: &str, state| Row {
+                update: Update {
+                    id: id.into(),
+                    kind,
+                    source,
+                    title: title.into(),
+                    current: current.into(),
+                    version: version.into(),
+                    ..Default::default()
+                },
+                selected: true,
+                state,
+                percent: None,
+            };
+            app.rows = vec![
+                make("d1", Kind::Driver, Source::WindowsUpdate, "Realtek Audio Driver", "6.0.9", "6.0.9500", ItemState::Waiting),
+                make(
+                    "d2",
+                    Kind::Driver,
+                    Source::WindowsUpdate,
+                    "Intel Wi-Fi Driver",
+                    "22.1",
+                    "23.0",
+                    ItemState::Skipped("The current driver couldn't be backed up (the system cannot find the file), so this was skipped. Press Install Anyway to install it without a backup.".into()),
+                ),
+                make("s1", Kind::Software, Source::Winget, "Spotify", "1.3.8", "1.3.9", ItemState::Failed("This program's installer refuses to run as an administrator, so DriverKeep can't update it. Update it from inside the program instead.".into())),
+                make("s2", Kind::Software, Source::Chocolatey, "obs-studio", "32.0.1", "33.0.1", ItemState::Failed("The program's installer stopped (code -1), so Chocolatey kept your current version. Close the program and anything using it, then press Try Again.".into())),
+                make("s3", Kind::Software, Source::Winget, "Google Chrome", "157.0.51", "157.0.79", ItemState::Installed),
+                make("s4", Kind::Software, Source::Winget, "Notepad++", "8.9.9", "8.9.9.1", ItemState::Waiting),
+            ];
+            // Kept in the list a later rebuild starts from, so the saved scan doesn't replace them.
+            app.raw = app.rows.iter().map(|r| r.update.clone()).collect();
+            app.searched = true;
+            app.updates_ready = true;
+        }
         if app.options.page.as_deref() == Some("restore-demo") {
             // For screenshots: made-up restore points, since the real ones need administrator rights.
             let info = App::sample_restore();

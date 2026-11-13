@@ -479,24 +479,33 @@ fn windows_update_install(
             let downloader = session.CreateUpdateDownloader().map_err(|e| e.to_string())?;
             downloader.SetUpdates(&list).map_err(|e| e.to_string())?;
             // Started without callbacks, then asked how far along it is until it's done.
-            let job = downloader
-                .BeginDownload(none, none, &VARIANT::default())
-                .map_err(|e| format!("Download failed ({e})"))?;
             let mut asked = false;
-            while !job.IsCompleted().map(|v| v.as_bool()).unwrap_or(true) {
-                if !asked && abort() {
-                    asked = true;
-                    let _ = job.RequestAbort();
+            let ended = match downloader.BeginDownload(none, none, &VARIANT::default()) {
+                Ok(job) => {
+                    while !job.IsCompleted().map(|v| v.as_bool()).unwrap_or(true) {
+                        if !asked && abort() {
+                            asked = true;
+                            let _ = job.RequestAbort();
+                        }
+                        if let Ok(done) = job.GetProgress().and_then(|p| p.PercentComplete()) {
+                            progress(done.clamp(0, 100) as u32);
+                        }
+                        std::thread::sleep(wait);
+                    }
+                    downloader.EndDownload(&job)
                 }
-                if let Ok(done) = job.GetProgress().and_then(|p| p.PercentComplete()) {
-                    progress(done.clamp(0, 100) as u32);
-                }
-                std::thread::sleep(wait);
-            }
-            let ended = downloader.EndDownload(&job);
+                Err(e) => Err(e),
+            };
             if asked || abort() {
                 return Err(CANCELLED.to_string());
             }
+            // Some computers (work ones with Windows Update policies, for one) refuse the
+            // background download with "Invalid pointer". Downloading in one go, without
+            // progress, still works there.
+            let ended = match ended {
+                Ok(result) => Ok(result),
+                Err(_) => downloader.Download(),
+            };
             let result = ended.map_err(|e| format!("Download failed ({e})"))?;
             let code = result.ResultCode().map_err(|e| e.to_string())?;
             if code != orcSucceeded && code != orcSucceededWithErrors {
@@ -604,7 +613,7 @@ fn install(
                 if let Some(problem) = problem.filter(|_| must_have && plan.require_backup) {
                     failed += 1;
                     note(ItemState::Skipped(format!(
-                        "The current driver couldn't be backed up ({problem}), so this was skipped. Use ··· to install it anyway."
+                        "The current driver couldn't be backed up ({problem}), so this was skipped. Press Install Anyway to install it without a backup."
                     )));
                     continue;
                 }

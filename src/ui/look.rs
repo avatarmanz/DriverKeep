@@ -399,13 +399,22 @@ pub fn cancel_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
     ui.add_enabled(enabled, button).clicked()
 }
 
-/// A clickable pill, shaped like the status pills.
-pub fn pill_button(ui: &mut egui::Ui, text: &str, color: Color32) -> bool {
-    let button = egui::Button::new(RichText::new(text).size(11.5).color(color))
-        .fill(color.gamma_multiply(0.16))
+/// The height of an update's name-and-details block, and of every button or status beside it.
+pub const ROW_BUTTON_H: f32 = 34.0;
+
+/// A button or status at the right of an update row. They all share one height, which matches the
+/// row. `fill` is the background and `ink` the text; a status (`clickable` false) doesn't react.
+pub fn row_button(ui: &mut egui::Ui, text: &str, fill: Color32, ink: Color32, clickable: bool) -> bool {
+    let mut button = egui::Button::new(RichText::new(text).size(12.5).color(ink))
+        .fill(fill)
         .stroke(egui::Stroke::NONE)
-        .corner_radius(CornerRadius::same(9))
-        .min_size(Vec2::new(0.0, 32.0));
+        .corner_radius(CornerRadius::same(7))
+        .min_size(Vec2::new(0.0, ROW_BUTTON_H));
+    if !clickable {
+        button = button.sense(Sense::hover());
+        ui.add(button);
+        return false;
+    }
     ui.add(button).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 

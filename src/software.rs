@@ -240,8 +240,33 @@ fn windows_package_manager() -> Result<Vec<Update>, String> {
 /// means the program, or something using its files, was open.
 fn chocolatey_failure(code: i32) -> String {
     format!(
-        "The program's installer stopped (code {code}), so Chocolatey kept your current version. Close the program and anything using it, then use ··· to try again."
+        "The program's installer stopped (code {code}), so Chocolatey kept your current version. Close the program and anything using it, then press Try Again."
     )
+}
+
+/// Says in plain words why winget gave up. The common ones are spelled out; for the rest it asks
+/// winget itself, which can describe its own error numbers.
+fn winget_failure(code: u32) -> String {
+    match code {
+        0x8A15_0056 => "This program's installer refuses to run as an administrator, so DriverKeep can't update it. \
+                        Update it from inside the program instead."
+            .into(),
+        0x8A15_0006 => "Windows couldn't start this program's installer. A security rule on this computer, \
+                        such as AppLocker or antivirus, may be blocking it."
+            .into(),
+        0x8A15_008E => "A newer version exists, but it installs a different way from the copy on this computer, \
+                        so the Windows Package Manager won't upgrade it. Uninstall the program and install it again."
+            .into(),
+        other => {
+            let described = system::run_quiet(&tool_path("winget"), &["error", "--input", &format!("0x{other:08X}")])
+                .ok()
+                .and_then(|(_, text)| text.lines().map(str::trim).filter(|l| !l.is_empty()).nth(1).map(str::to_string));
+            match described {
+                Some(why) => format!("The update didn't finish: {why} (error 0x{other:08X})."),
+                None => format!("The update didn't finish (error 0x{other:08X})."),
+            }
+        }
+    }
 }
 
 /// Updates one program. Gives back true when a restart is needed to finish.
@@ -282,7 +307,7 @@ pub fn upgrade(update: &Update) -> Result<bool, String> {
     match code as u32 {
         0 => Ok(false),
         REBOOT_TO_FINISH => Ok(true),
-        other => Err(format!("The update didn't finish (error 0x{other:08X}).")),
+        other => Err(winget_failure(other)),
     }
 }
 

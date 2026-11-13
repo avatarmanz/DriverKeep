@@ -207,7 +207,7 @@ impl App {
                     .map(|t| t.with_timezone(&chrono::Local).format("%B %-d, %Y  %-I:%M %p").to_string())
                     .unwrap_or_default();
                 // Deleting can't be undone, so the first press only asks.
-                let armed_id = ui.id().with(("delete-restore-point", point.number));
+                let armed_id = ui.make_persistent_id(("delete-restore-point", point.number));
                 let armed = ui.data(|d| d.get_temp::<bool>(armed_id)).unwrap_or(false);
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
