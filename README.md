@@ -75,6 +75,10 @@ installer isn't code-signed yet, Windows SmartScreen may warn you: choose **More
 Setup adds Microsoft's Visual C++ files (x64 and x86) if they're missing, so it works on a brand new PC. On first
 launch DriverKeep offers to install the Windows Package Manager and Chocolatey in the background.
 
+An `.msi` (`DriverKeep.msi`) is also on the Releases page, for managed computers and deployment tools. It installs
+to `Program Files\DriverKeep` and doesn't add Microsoft's Visual C++ files. Use it on a clean computer or to upgrade
+from an earlier `.msi`; don't install it over a copy from `DriverKeep-Setup.exe`.
+
 To remove it, use **Installed apps** in Windows Settings. Your driver backups are kept.
 
 ## DriverKeep for Linux (command line, early test version)

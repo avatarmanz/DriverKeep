@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- WiX Toolset v3 source for DriverKeep.msi. Build with make-msi.cmd.
-     NOT YET BUILT OR TESTED: written without WiX installed. -->
+     Built with WiX v3. Silent install, launch and uninstall checked on one PC; not tested over a Setup.exe install. -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <!-- Version and ExePath are passed in by make-msi.cmd (-dVersion=... -dExePath=...). -->
   <Product Id="*" Name="DriverKeep" Language="1033" Version="$(var.Version)"
