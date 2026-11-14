@@ -35,6 +35,11 @@ static TO_WORKER: OnceLock<Mutex<Sender<Ask>>> = OnceLock::new();
 static BALLOON: Mutex<Option<(String, String)>> = Mutex::new(None);
 static WINDOW: Mutex<isize> = Mutex::new(0);
 static RESTART_PENDING: Mutex<bool> = Mutex::new(false);
+/// Windows sends this message to every window when the taskbar is created, which includes after
+/// Explorer restarts and when it first comes up at sign-in. Icons added before then are lost.
+static TASKBAR_CREATED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+const RETRY_TIMER: usize = 1;
+static RETRIES_LEFT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn ask(request: Ask) {
     if let Some(tx) = TO_WORKER.get().and_then(|m| m.lock().ok()) {
@@ -75,6 +80,26 @@ fn tray_data(hwnd: HWND) -> NOTIFYICONDATAW {
     data
 }
 
+/// Puts the icon in the tray if it isn't there yet. At sign-in the helper can start before the taskbar
+/// exists, and then adding it fails, so it's tried again until it takes. True once the icon is there.
+fn ensure_icon(hwnd: HWND) -> bool {
+    let data = tray_data(hwnd);
+    unsafe {
+        // Already there? Changing it works only if it is.
+        if Shell_NotifyIconW(NIM_MODIFY, &data).as_bool() {
+            return true;
+        }
+        Shell_NotifyIconW(NIM_ADD, &data).as_bool()
+    }
+}
+
+fn keep_trying(hwnd: HWND) {
+    RETRIES_LEFT.store(120, std::sync::atomic::Ordering::SeqCst);
+    unsafe {
+        SetTimer(Some(hwnd), RETRY_TIMER, 3000, None);
+    }
+}
+
 fn show_menu(hwnd: HWND) {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
@@ -94,7 +119,25 @@ fn show_menu(hwnd: HWND) {
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if message != 0 && message == TASKBAR_CREATED.load(std::sync::atomic::Ordering::SeqCst) {
+        // The taskbar was (re)built, so the icon has to be added again.
+        if !ensure_icon(hwnd) {
+            keep_trying(hwnd);
+        }
+        return LRESULT(0);
+    }
     match message {
+        WM_TIMER if wparam.0 == RETRY_TIMER => {
+            let left = RETRIES_LEFT.load(std::sync::atomic::Ordering::SeqCst);
+            if ensure_icon(hwnd) || left == 0 {
+                unsafe {
+                    let _ = KillTimer(Some(hwnd), RETRY_TIMER);
+                }
+            } else {
+                RETRIES_LEFT.store(left - 1, std::sync::atomic::Ordering::SeqCst);
+            }
+            LRESULT(0)
+        }
         WM_TRAY => {
             let event = (lparam.0 & 0xFFFF) as u32;
             if event == WM_LBUTTONUP {
@@ -539,7 +582,10 @@ pub fn run(open_window: bool) {
         if let Ok(mut slot) = WINDOW.lock() {
             *slot = hwnd.0 as isize;
         }
-        let _ = Shell_NotifyIconW(NIM_ADD, &tray_data(hwnd));
+        TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), std::sync::atomic::Ordering::SeqCst);
+        if !ensure_icon(hwnd) {
+            keep_trying(hwnd);
+        }
 
         let (tx, inbox) = channel();
         let _ = TO_WORKER.set(Mutex::new(tx));
