@@ -190,12 +190,70 @@ pub fn keep_chocolatey_copy(winget: &mut Vec<Update>, choco: &[Update]) {
     });
 }
 
+/// The same name with only letters and digits, and "+" spelled out so "Notepad++" matches "notepadplusplus".
+fn name_key(text: &str) -> String {
+    text.to_lowercase()
+        .replace('+', "plus")
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect()
+}
+
+/// What Windows itself says is installed, as (name, version) from its uninstall lists. A program
+/// updated by hand, or by its own updater, shows its new version here even though a package manager
+/// still has the old one on record.
+pub fn installed_programs() -> Vec<(String, String)> {
+    let script = r#"$paths = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and $_.DisplayVersion } | ForEach-Object { "$($_.DisplayName)|$($_.DisplayVersion)" }"#;
+    crate::restore::powershell(script)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let (name, version) = line.trim().rsplit_once('|')?;
+            (!name.is_empty() && !version.is_empty()).then(|| (name.to_string(), version.to_string()))
+        })
+        .collect()
+}
+
+/// Drops updates for programs whose real installed version is already the offered one or newer, and
+/// shows the real version as the current one for those that stay. `exact` matches only identical names;
+/// otherwise a package id that starts the program's name counts too ("vlc" for "VLC media player").
+pub fn reconcile(updates: Vec<Update>, installed: &[(String, String)], exact: bool) -> Vec<Update> {
+    updates
+        .into_iter()
+        .filter_map(|mut update| {
+            let id = update.id.strip_prefix(CHOCO_PREFIX).or(update.id.strip_prefix(ID_PREFIX)).unwrap_or(&update.id);
+            let keys: Vec<String> = [name_key(id), name_key(&update.title)].into_iter().filter(|k| k.len() >= 3).collect();
+            let mut best: Option<&str> = None;
+            for (name, version) in installed {
+                let name = name_key(name);
+                let hit = keys.iter().any(|k| name == *k || (!exact && name.starts_with(k.as_str())));
+                if hit && best.is_none_or(|b| crate::catalog::is_newer(version, b)) {
+                    best = Some(version);
+                }
+            }
+            match best {
+                Some(actual) if !crate::catalog::is_newer(&update.version, actual) => None,
+                Some(actual) => {
+                    update.current = actual.to_string();
+                    Some(update)
+                }
+                None => Some(update),
+            }
+        })
+        .collect()
+}
+
 /// Asks every enabled package manager, side by side.
 pub fn find(use_winget: bool, use_chocolatey: bool) -> Result<Vec<Update>, String> {
+    let installed = installed_programs();
     let (first, second) = std::thread::scope(|scope| {
-        let one = scope.spawn(|| if use_winget { windows_package_manager() } else { Ok(Vec::new()) });
-        let two = scope.spawn(|| {
-            if use_chocolatey && tool_ready("choco") { chocolatey() } else { Ok(Vec::new()) }
+        let installed = &installed;
+        let one = scope.spawn(move || {
+            if use_winget { windows_package_manager().map(|found| reconcile(found, installed, true)) } else { Ok(Vec::new()) }
+        });
+        let two = scope.spawn(move || {
+            if use_chocolatey && tool_ready("choco") { chocolatey().map(|found| reconcile(found, installed, false)) } else { Ok(Vec::new()) }
         });
         (one.join().unwrap_or(Ok(Vec::new())), two.join().unwrap_or(Ok(Vec::new())))
     });
@@ -341,6 +399,58 @@ mod tests {
         keep_chocolatey_copy(&mut winget, &[named("obs-studio")]);
         assert_eq!(winget.len(), 1);
         assert_eq!(winget[0].title, "Telegram Desktop");
+    }
+
+    fn choco(id: &str, current: &str, available: &str) -> Update {
+        Update {
+            id: format!("{CHOCO_PREFIX}{id}"),
+            title: id.into(),
+            current: current.into(),
+            version: available.into(),
+            source: Source::Chocolatey,
+            ..Default::default()
+        }
+    }
+
+    fn installed() -> Vec<(String, String)> {
+        [("OBS Studio", "33.0.1"), ("Google Chrome", "157.0.8103.79"), ("Notepad++ (64-bit x64)", "8.9.9"), ("VLC media player", "3.0.23"), ("Digital Clock", "9.9.9")]
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn a_program_updated_by_hand_is_no_longer_offered() {
+        let left = reconcile(vec![choco("obs-studio", "32.2.2", "33.0.1"), choco("GoogleChrome", "154.0", "157.0.8103.79")], &installed(), false);
+        assert!(left.is_empty());
+    }
+
+    #[test]
+    fn a_program_that_is_really_older_stays_and_shows_its_real_version() {
+        let left = reconcile(vec![choco("obs-studio", "32.0.0", "34.0.0")], &installed(), false);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].current, "33.0.1");
+    }
+
+    #[test]
+    fn names_with_plus_signs_and_longer_names_still_match() {
+        assert!(reconcile(vec![choco("notepadplusplus", "8.9.0", "8.9.9")], &installed(), false).is_empty());
+        assert!(reconcile(vec![choco("vlc", "3.0.20", "3.0.23")], &installed(), false).is_empty());
+    }
+
+    #[test]
+    fn short_ids_do_not_match_unrelated_programs() {
+        // "git" must not be read as "Digital Clock", and a program that isn't listed is left alone.
+        assert_eq!(reconcile(vec![choco("git", "2.0", "99.0")], &installed(), false).len(), 1);
+        assert_eq!(reconcile(vec![choco("unknown-tool", "1.0", "2.0")], &installed(), false).len(), 1);
+    }
+
+    #[test]
+    fn winget_names_must_match_exactly() {
+        let winget = Update { id: "Notepad++.Notepad++".into(), title: "Notepad++ (64-bit x64)".into(), version: "8.9.9".into(), source: Source::Winget, ..Default::default() };
+        assert!(reconcile(vec![winget.clone()], &installed(), true).is_empty());
+        let loose = Update { title: "OBS".into(), id: "x".into(), version: "99".into(), ..winget };
+        assert_eq!(reconcile(vec![loose], &installed(), true).len(), 1);
     }
 
     #[test]
