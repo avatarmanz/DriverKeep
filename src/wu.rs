@@ -543,16 +543,22 @@ fn windows_update_install(
         progress(0);
         let installer = session.CreateUpdateInstaller().map_err(|e| e.to_string())?;
         installer.SetUpdates(&list).map_err(|e| e.to_string())?;
-        let job = installer
-            .BeginInstall(none, none, &VARIANT::default())
-            .map_err(|e| format!("Install failed ({e})"))?;
-        while !job.IsCompleted().map(|v| v.as_bool()).unwrap_or(true) {
-            if let Ok(done) = job.GetProgress().and_then(|p| p.PercentComplete()) {
-                progress(done.clamp(0, 100) as u32);
+        // Started in the background so progress can be shown. Some computers refuse that with "Invalid
+        // pointer" before anything has started; installing in one go, without progress, works there.
+        let result = match installer.BeginInstall(none, none, &VARIANT::default()) {
+            Ok(job) => {
+                while !job.IsCompleted().map(|v| v.as_bool()).unwrap_or(true) {
+                    if let Ok(done) = job.GetProgress().and_then(|p| p.PercentComplete()) {
+                        progress(done.clamp(0, 100) as u32);
+                    }
+                    std::thread::sleep(wait);
+                }
+                installer.EndInstall(&job).map_err(|e| {
+                    format!("Install failed ({e}). Windows may still have installed it, so scan again to check.")
+                })?
             }
-            std::thread::sleep(wait);
-        }
-        let result = installer.EndInstall(&job).map_err(|e| format!("Install failed ({e})"))?;
+            Err(_) => installer.Install().map_err(|e| format!("Install failed ({e})"))?,
+        };
         let code = result.ResultCode().map_err(|e| e.to_string())?;
         if code != orcSucceeded && code != orcSucceededWithErrors {
             let detail = result.HResult().unwrap_or(0);
