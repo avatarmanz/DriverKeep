@@ -450,6 +450,8 @@ impl App {
                             .interact(Sense::click());
                         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             self.show = show;
+                            self.show_hardware = true;
+                            self.jump_to_hardware = 20;
                             self.page = Page::System;
                         }
                     }

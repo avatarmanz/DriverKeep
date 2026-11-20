@@ -200,6 +200,9 @@ pub struct App {
     restore_gb: String,
     /// The All hardware list on System Info is folded away until Show is pressed.
     show_hardware: bool,
+    /// Frames left of opening the hardware list and scrolling to it, after a tile on the Updates page sent the
+    /// person here. It takes a few frames because the groups open with a short animation and the page grows.
+    jump_to_hardware: u8,
     restore_tried: bool,
     /// The Backups page was asked to scroll down to the saved backups.
     jump_to_backups: bool,
@@ -235,7 +238,7 @@ impl App {
             settings.accent = look::DEFAULT_ACCENT;
         }
         let page = match options.page.as_deref() {
-            Some("system") | Some("hardware") => Page::System,
+            Some("system") | Some("hardware") | Some("system-past") => Page::System,
             Some("restore-points") | Some("restore-demo") => Page::Restore,
             Some("backups") | Some("backup") | Some("restore") => Page::Backups,
             Some(page) if page.starts_with("settings") || page == "about" => Page::Settings,
@@ -306,6 +309,7 @@ impl App {
             restore_job: None,
             restore_gb: String::new(),
             show_hardware: false,
+            jump_to_hardware: 0,
             restore_tried: false,
             jump_to_backups: false,
             job_ids: Vec::new(),
@@ -359,6 +363,12 @@ impl App {
                 app.settings.ignored.push(id.to_string());
                 app.settings.ignored_names.insert(id.to_string(), (title.to_string(), detail.to_string()));
             }
+        }
+        if app.options.page.as_deref() == Some("system-past") {
+            // For screenshots: what clicking the "Used to be connected" tile does.
+            app.show = Show::Past;
+            app.show_hardware = true;
+            app.jump_to_hardware = 20;
         }
         if app.options.page.as_deref() == Some("updates-demo") {
             // For screenshots: made-up updates in each state, so the buttons beside them can be compared.

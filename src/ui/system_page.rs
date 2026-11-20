@@ -71,12 +71,20 @@ impl App {
             ui.add_space(8.0);
             // The full device list is long, so it's folded away until it's wanted.
             let mut toggle = false;
-            ui.horizontal(|ui| {
+            let jump = self.jump_to_hardware > 0;
+            if jump {
+                self.jump_to_hardware -= 1;
+                ui.ctx().request_repaint();
+            }
+            let heading_row = ui.horizontal(|ui| {
                 heading(ui, "All hardware");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     toggle = secondary(ui, if self.show_hardware { "Hide" } else { "Show" }, true);
                 });
             });
+            if jump {
+                heading_row.response.scroll_to_me(Some(Align::TOP));
+            }
             if toggle {
                 self.show_hardware = !self.show_hardware;
             }
@@ -99,11 +107,11 @@ impl App {
                 ui.checkbox(&mut self.show_system_items, "Windows system items");
             });
             ui.add_space(6.0);
-            self.device_groups(ui);
+            self.device_groups(ui, jump);
         });
     }
 
-    fn device_groups(&mut self, ui: &mut egui::Ui) {
+    fn device_groups(&mut self, ui: &mut egui::Ui, open_all: bool) {
         let needle = self.filter.to_lowercase();
         let picked = self.picked_device.clone();
         let filtering = !needle.is_empty() || self.show != Show::All;
@@ -135,6 +143,8 @@ impl App {
             egui::CollapsingHeader::new(RichText::new(format!("{group}  ({})", list.len())).size(13.5))
                 .id_salt(group)
                 .default_open(filtering)
+                // Arriving from a tile opens every group, even ones closed earlier.
+                .open(open_all.then_some(true))
                 .show(ui, |ui| {
                     for d in list {
                         let chosen = picked.as_deref() == Some(d.instance_id.as_str());
